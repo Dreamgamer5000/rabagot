@@ -1,0 +1,30 @@
+services:
+  backend:
+    build: ./backend
+    container_name: picshare-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app.db:/app/app.db
+      - ./backend/uploads:/app/uploads
+      - ./backend/thumbnails:/app/thumbnails
+    env_file:
+      - ./backend/.env
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Pass the public API URL during build so Next.js can bake it into the client code
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    container_name: picshare-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: always
+
+# Define named volumes if you prefer, but host-binding is simpler for VPS deployments
+# volumes:
+#   backend_data:

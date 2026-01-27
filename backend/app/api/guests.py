@@ -1,0 +1,221 @@
+import asyncio
+import os
+import shutil
+import uuid
+import json
+import numpy as np
+from datetime import datetime
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import io
+import zipfile
+from app.services.db import db
+from app.services.drive_service import drive_service
+from app.services.face_service import face_service
+from app.core.config import get_settings
+
+router = APIRouter(prefix="/guests", tags=["guests"])
+settings = get_settings()
+
+UPLOAD_DIR = "uploads/selfies"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+async def process_guest_request(request_id: str, event_slug: str, name: str, email: str, selfie_path: str):
+    try:
+        # 1. Extract face embedding
+        faces = await asyncio.to_thread(face_service.get_embeddings, selfie_path)
+        if not faces:
+            await db.execute("UPDATE guests SET status = ?, error = ? WHERE id = ?", ("error", "No face detected in selfie", request_id))
+            return
+
+        guest_embedding = faces[0]["embedding"]
+        
+        # 3. Match against stored faces
+        row = await db.fetch_one("SELECT id FROM events WHERE slug = ?", (event_slug,))
+        if not row: return
+        event_id = row["id"]
+
+        matches = []
+        rows = await db.fetch_all("SELECT photo_id, embedding_vector FROM faces WHERE event_id = ?", (event_id,))
+        for face_row in rows:
+            # Embedding is stored as JSON string
+            stored_embedding = np.array(json.loads(face_row["embedding_vector"]))
+            score = await asyncio.to_thread(face_service.compute_similarity, guest_embedding, stored_embedding)
+            if score >= settings.FACE_SIMILARITY_THRESHOLD:
+                matches.append({
+                    "photo_id": face_row["photo_id"],
+                    "score": score
+                })
+
+        # Deduplicate and sort
+        unique_matches = {}
+        for m in matches:
+            p_id = m["photo_id"]
+            if p_id not in unique_matches or m["score"] > unique_matches[p_id]["score"]:
+                unique_matches[p_id] = m
+        
+        sorted_matches = sorted(unique_matches.values(), key=lambda x: x["score"], reverse=True)[:150]
+        matched_photo_ids = [m["photo_id"] for m in sorted_matches]
+
+        # 4. Final Update
+        await db.execute("""
+            UPDATE guests SET 
+                status = ?, match_count = ?, matched_photo_ids = ? 
+            WHERE id = ?
+        """, ("completed", len(matched_photo_ids), json.dumps(matched_photo_ids), request_id))
+        
+    except Exception as e:
+        print(f"Error processing guest request {request_id}: {e}")
+        await db.execute("UPDATE guests SET status = ?, error = ? WHERE id = ?", ("error", str(e), request_id))
+
+@router.post("/request")
+async def guest_request(
+    background_tasks: BackgroundTasks,
+    event_slug: str = Form(...),
+    name: str = Form(...),
+    email: str = Form(...),
+    phone: str = Form(None),
+    secret_code: str = Form(None),
+    selfie: UploadFile = File(...)
+):
+    row = await db.fetch_one("SELECT id, secret_code FROM events WHERE slug = ?", (event_slug,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    event_id = row["id"]
+    expected_code = row["secret_code"]
+
+    if expected_code and expected_code != secret_code:
+        raise HTTPException(status_code=401, detail="Invalid secret code")
+
+    existing_request = await db.fetch_one("""
+        SELECT * FROM guests WHERE event_id = ? AND name = ? AND email = ?
+    """, (event_id, name, email))
+    
+    if existing_request:
+        return {
+            "message": "Found your existing request!",
+            "request_id": existing_request["id"],
+            "status": existing_request["status"]
+        }
+
+    request_id = str(uuid.uuid4())
+    file_ext = selfie.filename.split(".")[-1]
+    selfie_path = os.path.join(UPLOAD_DIR, f"{request_id}.{file_ext}")
+    
+    with open(selfie_path, "wb") as buffer:
+        shutil.copyfileobj(selfie.file, buffer)
+
+    await db.execute("""
+        INSERT INTO guests (id, event_id, name, email, phone, selfie_path, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (request_id, event_id, name, email, phone, selfie_path, "processing", datetime.utcnow().isoformat()))
+
+    background_tasks.add_task(process_guest_request, request_id, event_slug, name, email, selfie_path)
+    return {"message": "Your photos are being processed.", "request_id": request_id}
+
+@router.get("/status/{request_id}")
+async def get_guest_request_status(request_id: str):
+    row = await db.fetch_one("SELECT * FROM guests WHERE id = ?", (request_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Request not found")
+    
+    return {
+        "status": row.get("status"),
+        "match_count": row.get("match_count", 0),
+        "error": row.get("error")
+    }
+
+@router.get("/{request_id}/matches")
+async def get_guest_matches(request_id: str, page: int = 1, limit: int = 50):
+    row = await db.fetch_one("SELECT * FROM guests WHERE id = ?", (request_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Request not found")
+    
+    photo_ids = json.loads(row.get("matched_photo_ids") or "[]")
+    total_matches = len(photo_ids)
+    
+    start = (page - 1) * limit
+    end = start + limit
+    paged_ids = photo_ids[start:end]
+    
+    if not paged_ids:
+        return {
+            "guest_name": row.get("name"),
+            "match_count": total_matches,
+            "page": page,
+            "limit": limit,
+            "photos": [],
+            "total_pages": (total_matches + limit - 1) // limit if total_matches > 0 else 0
+        }
+
+    # Fetch details
+    placeholders = ",".join(["?"] * len(paged_ids))
+    photo_rows = await db.fetch_all(f"SELECT * FROM photos WHERE id IN ({placeholders})", paged_ids)
+    
+    fetched_photos = {}
+    for p in photo_rows:
+        fetched_photos[p["id"]] = {
+            "id": p["id"],
+            "filename": p.get("original_file_name"),
+            "thumbnail_url": f"/photos/thumbnail/{p['id']}",
+            "original_url": f"/photos/original/{p['id']}",
+            "drive_file_id": p.get("drive_file_id")
+        }
+    
+    photos = []
+    for p_id in paged_ids:
+        if p_id in fetched_photos:
+            photos.append(fetched_photos[p_id])
+        
+    return {
+        "guest_name": row.get("name"),
+        "match_count": total_matches,
+        "page": page,
+        "limit": limit,
+        "photos": photos,
+        "total_pages": (total_matches + limit - 1) // limit
+    }
+
+@router.get("/{request_id}/download-zip")
+async def download_guest_zip(request_id: str):
+    row = await db.fetch_one("SELECT * FROM guests WHERE id = ?", (request_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail="Request not found")
+        
+    photo_ids = json.loads(row.get("matched_photo_ids") or "[]")
+    if not photo_ids:
+        raise HTTPException(status_code=400, detail="No photos to download")
+        
+    zip_buffer = io.BytesIO()
+    UPLOAD_ROOT = "uploads/originals" 
+    
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        placeholders = ",".join(["?"] * len(photo_ids))
+        photo_rows = await db.fetch_all(f"SELECT * FROM photos WHERE id IN ({placeholders})", photo_ids)
+        
+        for p in photo_rows:
+            local_path = None
+            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp']:
+                path = os.path.join(UPLOAD_ROOT, f"{p['id']}.{ext}")
+                if os.path.exists(path):
+                    local_path = path
+                    break
+            
+            if local_path:
+                zip_file.write(local_path, p.get("original_file_name", f"{p['id']}.jpg"))
+            elif p.get("drive_file_id"):
+                try:
+                    content, filename = await drive_service.download_file(p["drive_file_id"])
+                    if content:
+                        zip_file.writestr(filename, content)
+                except Exception as e:
+                    print(f"Zip inclusion error for {p['id']}: {e}")
+                    
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/x-zip-compressed",
+        headers={"Content-Disposition": f"attachment; filename={row['name']}_photos.zip"}
+    )

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+app.db
+uploads/
+thumbnails/
+.git/
+.github/
+.vscode/
+.idea/
+*.log
