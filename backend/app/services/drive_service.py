@@ -49,10 +49,10 @@ class DriveService:
         service = self._get_random_service()
         if not service: return None
         
-        # 1. Get or create event folder directly under the designated DRIVE_FOLDER_ID
+        # 1. Get or create event folder directly under the root of the drive
         event_folder_id = await asyncio.to_thread(self._get_folder_id_sync, service, event_slug)
         if not event_folder_id:
-            event_folder_id = await asyncio.to_thread(self._create_folder_sync, service, event_slug, settings.DRIVE_FOLDER_ID)
+            event_folder_id = await asyncio.to_thread(self._create_folder_sync, service, event_slug, None)
             # Create subfolders
             await asyncio.to_thread(self._create_folder_sync, service, "All-Photos", event_folder_id)
             await asyncio.to_thread(self._create_folder_sync, service, "Guests", event_folder_id)
@@ -61,9 +61,8 @@ class DriveService:
 
     def _get_folder_id_sync(self, service, name: str, parent_id: str = None):
         query = f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-        actual_parent = parent_id or settings.DRIVE_FOLDER_ID
-        if actual_parent:
-            query += f" and '{actual_parent}' in parents"
+        if parent_id:
+            query += f" and '{parent_id}' in parents"
         
         results = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
         files = results.get('files', [])

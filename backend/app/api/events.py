@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from app.services.db import db
 
-router = APIRouter(prefix="/events", tags=["events"])
+router = APIRouter(prefix="/events", tags=["events"],)
 
 class EventCreate(BaseModel):
     name: str
@@ -86,6 +86,7 @@ async def verify_event_code(data: CodeVerify):
     
     return {"status": "success", "event": event}
 
+@router.post("", response_model=EventResponse)
 @router.post("/", response_model=EventResponse)
 async def create_event(event: EventCreate):
     # Check if slug exists
@@ -113,6 +114,7 @@ async def create_event(event: EventCreate):
     row = await db.fetch_one("SELECT * FROM events WHERE id = ?", (event_id,))
     return format_event(row)
 
+@router.get("", response_model=List[EventResponse])
 @router.get("/", response_model=List[EventResponse])
 async def list_events():
     rows = await db.fetch_all("SELECT * FROM events ORDER BY created_at DESC")
@@ -155,3 +157,140 @@ async def get_event(event_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="Event not found")
     return format_event(row)
+
+@router.get("/{event_id}/storage")
+async def get_event_storage(event_id: str):
+    """Get storage usage information for an event"""
+    import os
+    import shutil
+    from app.core.config import get_settings
+    
+    settings = get_settings()
+    
+    # Check if event exists
+    event = await db.fetch_one("SELECT * FROM events WHERE id = ?", (event_id,))
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    # Calculate storage used by this event
+    event_storage = 0
+    
+    # 1. Calculate photos storage
+    photos = await db.fetch_all("SELECT * FROM photos WHERE event_id = ?", (event_id,))
+    for photo in photos:
+        photo_id = photo["id"]
+        
+        # Check original photo files
+        for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+            original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+            if os.path.exists(original_path):
+                event_storage += os.path.getsize(original_path)
+        
+        # Check thumbnail files
+        thumbnail_path = photo.get("thumbnail_path")
+        if thumbnail_path and os.path.exists(thumbnail_path):
+            event_storage += os.path.getsize(thumbnail_path)
+    
+    # 2. Calculate guest selfies storage
+    guests = await db.fetch_all("SELECT * FROM guests WHERE event_id = ?", (event_id,))
+    for guest in guests:
+        selfie_path = guest.get("selfie_path")
+        if selfie_path and os.path.exists(selfie_path):
+            event_storage += os.path.getsize(selfie_path)
+    
+    # 3. Get system storage information
+    try:
+        # Get disk usage for the data directory
+        data_path = os.path.dirname(settings.DB_PATH)
+        if not os.path.exists(data_path):
+            data_path = "."
+        
+        disk_usage = shutil.disk_usage(data_path)
+        total_storage = disk_usage.total
+        free_storage = disk_usage.free
+        used_storage = disk_usage.used
+    except Exception as e:
+        print(f"Error getting disk usage: {e}")
+        total_storage = 0
+        free_storage = 0
+        used_storage = 0
+    
+    return {
+        "event_id": event_id,
+        "event_storage_bytes": event_storage,
+        "event_storage_mb": round(event_storage / (1024 * 1024), 2),
+        "event_storage_gb": round(event_storage / (1024 * 1024 * 1024), 2),
+        "total_storage_bytes": total_storage,
+        "total_storage_gb": round(total_storage / (1024 * 1024 * 1024), 2),
+        "free_storage_bytes": free_storage,
+        "free_storage_gb": round(free_storage / (1024 * 1024 * 1024), 2),
+        "used_storage_bytes": used_storage,
+        "used_storage_gb": round(used_storage / (1024 * 1024 * 1024), 2),
+        "photo_count"   : len(photos),
+        "guest_count": len(guests)
+    }
+
+@router.delete("/{event_id}")
+async def delete_event(event_id: str):
+    """Delete an event and all associated data (photos, faces, guests, files)"""
+    import os
+    import shutil
+    from app.core.config import get_settings
+    
+    settings = get_settings()
+    
+    # Check if event exists
+    event = await db.fetch_one("SELECT * FROM events WHERE id = ?", (event_id,))
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    try:
+        # Get all photos for this event to delete their files
+        photos = await db.fetch_all("SELECT * FROM photos WHERE event_id = ?", (event_id,))
+        
+        for photo in photos:
+            photo_id = photo["id"]
+            
+            # Delete original photo files (try multiple extensions)
+            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+                original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+                if os.path.exists(original_path):
+                    try:
+                        os.remove(original_path)
+                    except Exception as e:
+                        print(f"Error deleting original {original_path}: {e}")
+            
+            # Delete thumbnail files
+            thumbnail_path = photo.get("thumbnail_path")
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                try:
+                    os.remove(thumbnail_path)
+                except Exception as e:
+                    print(f"Error deleting thumbnail {thumbnail_path}: {e}")
+        
+        # Get all guests for this event to delete their selfies
+        guests = await db.fetch_all("SELECT * FROM guests WHERE event_id = ?", (event_id,))
+        
+        for guest in guests:
+            selfie_path = guest.get("selfie_path")
+            if selfie_path and os.path.exists(selfie_path):
+                try:
+                    os.remove(selfie_path)
+                except Exception as e:
+                    print(f"Error deleting selfie {selfie_path}: {e}")
+        
+        # Delete from database (in correct order due to foreign keys)
+        await db.execute("DELETE FROM faces WHERE event_id = ?", (event_id,))
+        await db.execute("DELETE FROM photos WHERE event_id = ?", (event_id,))
+        await db.execute("DELETE FROM guests WHERE event_id = ?", (event_id,))
+        await db.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        
+        return {
+            "message": "Event deleted successfully",
+            "deleted_photos": len(photos),
+            "deleted_guests": len(guests)
+        }
+        
+    except Exception as e:
+        print(f"Error deleting event {event_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting event: {str(e)}")

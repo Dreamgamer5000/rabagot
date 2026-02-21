@@ -4,13 +4,13 @@ import json
 from app.core.config import get_settings
 
 settings = get_settings()
-DB_PATH = "app.db"
+
 
 class Database:
     connection: aiosqlite.Connection = None
 
     async def connect(self):
-        self.connection = await aiosqlite.connect(DB_PATH)
+        self.connection = await aiosqlite.connect(settings.DB_PATH)
         self.connection.row_factory = aiosqlite.Row
         await self._init_tables()
 
@@ -32,7 +32,7 @@ class Database:
                 created_at TEXT NOT NULL
             )
         """)
-        
+
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS photos (
                 id TEXT PRIMARY KEY,
@@ -48,7 +48,7 @@ class Database:
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         """)
-        
+
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS faces (
                 id TEXT PRIMARY KEY,
@@ -61,7 +61,7 @@ class Database:
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         """)
-        
+
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS guests (
                 id TEXT PRIMARY KEY,
@@ -73,14 +73,20 @@ class Database:
                 status TEXT DEFAULT 'processing',
                 match_count INTEGER DEFAULT 0,
                 matched_photo_ids TEXT,
+                error TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         """)
-        await self.connection.execute("CREATE INDEX IF NOT EXISTS idx_photos_event ON photos (event_id)")
-        await self.connection.execute("CREATE INDEX IF NOT EXISTS idx_photos_drive ON photos (drive_file_id)")
-        await self.connection.execute("CREATE INDEX IF NOT EXISTS idx_faces_event ON faces (event_id)")
-        await self.connection.execute("CREATE INDEX IF NOT EXISTS idx_guests_event ON guests (event_id)")
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photos_event ON photos (event_id)")
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photos_drive ON photos (drive_file_id)"
+        )
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_faces_event ON faces (event_id)")
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_guests_event ON guests (event_id)")
         await self.connection.commit()
 
     # Helper methods to make API migration easier
@@ -98,10 +104,13 @@ class Database:
         await self.connection.execute(query, params)
         await self.connection.commit()
 
+
 db = Database()
+
 
 async def connect_to_db():
     await db.connect()
+
 
 async def close_db_connection():
     await db.disconnect()
