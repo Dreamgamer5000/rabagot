@@ -52,7 +52,7 @@ export default function AdminLoginClient() {
     };
 
     return (
-        <div className="min-h-screen bg-background flex items-center justify-center p-4 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-100/20 via-background to-blue-100/20 transition-colors duration-300">
+        <div className="bg-background flex items-center justify-center p-4 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-100/20 via-background to-blue-100/20 transition-colors duration-300">
             <Card className="w-full max-w-md border border-border shadow-2xl bg-card/90 backdrop-blur-lg">
                 <CardHeader className="space-y-1 text-center">
                     <div className="mx-auto w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white mb-4 shadow-lg dark:shadow-none">

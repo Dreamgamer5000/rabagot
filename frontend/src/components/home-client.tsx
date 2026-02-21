@@ -9,7 +9,7 @@ export default function HomeClient() {
     const router = useRouter();
 
     return (
-        <div className="min-h-screen bg-background selection:bg-indigo-100/30">
+        <div className="bg-background selection:bg-indigo-100/30">
             {/* Hero Section */}
             <header className="relative overflow-hidden bg-background pt-16 pb-32 border-b border-border">
                 <div className="absolute inset-0 bg-[radial-gradient(45%_45%_at_50%_50%,rgba(99,102,241,0.05)_0%,rgba(0,0,0,0)_100%)]" />
@@ -77,13 +77,6 @@ export default function HomeClient() {
                     </div>
                 </div>
             </section>
-
-            {/* Footer */}
-            <footer className="py-12 bg-muted/30 border-t border-border">
-                <div className="container mx-auto px-6 text-center text-muted-foreground text-sm">
-                    <p>© 2026 PicShare AI. All rights reserved.</p>
-                </div>
-            </footer>
         </div>
     );
 }

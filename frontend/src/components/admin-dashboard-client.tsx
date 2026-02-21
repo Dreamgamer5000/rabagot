@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink } from "lucide-react";
+import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown } from "lucide-react";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -22,6 +22,30 @@ interface Event {
     last_sync_at?: string;
 }
 
+interface Guest {
+    id: string;
+    name: string;
+    email: string;
+    phone?: string;
+    selfie_path?: string;
+    status: string;
+    match_count: number;
+    created_at: string;
+    gallery_link: string;
+}
+
+interface Photo {
+    id: string;
+    original_file_name: string;
+    thumbnail_path?: string;
+    width?: number;
+    height?: number;
+    faces_count: number;
+    status: string;
+    created_at: string;
+    drive_file_id?: string;
+}
+
 interface EventStatusData {
     total: number;
     pending: number;
@@ -30,6 +54,20 @@ interface EventStatusData {
     total_faces: number;
     progress: number;
     sync_status: string;
+}
+
+interface StorageInfo {
+    event_storage_bytes: number;
+    event_storage_mb: number;
+    event_storage_gb: number;
+    total_storage_bytes: number;
+    total_storage_gb: number;
+    free_storage_bytes: number;
+    free_storage_gb: number;
+    used_storage_bytes: number;
+    used_storage_gb: number;
+    photo_count: number;
+    guest_count: number;
 }
 
 const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }: {
@@ -55,8 +93,9 @@ const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }
                     setStatus(data);
 
                     // Stop polling if fully complete
+
                     const syncDone = data.sync_status === "completed" || data.sync_status === "idle";
-                    const processingDone = data.progress === 100 && data.pending === 0;
+                    const processingDone = data.pending === 0;
 
                     if (syncDone && processingDone && pollRef.current) {
                         clearInterval(pollRef.current);
@@ -123,6 +162,108 @@ const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }
     );
 };
 
+const StorageDisplay = ({ eventId, apiUrl }: { eventId: string, apiUrl: string }) => {
+    const [storage, setStorage] = useState<StorageInfo | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [isExpanded, setIsExpanded] = useState(false);
+
+    useEffect(() => {
+        const fetchStorage = async () => {
+            const token = Cookies.get("admin_token");
+            try {
+                const res = await fetch(`${apiUrl}/events/${eventId}/storage`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    setStorage(data);
+                }
+            } catch (error: unknown) {
+                console.error("Storage fetch error:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchStorage();
+    }, [eventId, apiUrl]);
+
+    if (loading) return <div className="h-16 w-full bg-muted animate-pulse rounded-lg mt-2" />;
+    if (!storage) return null;
+
+    const formatSize = (bytes: number) => {
+        if (bytes >= 1024 * 1024 * 1024) {
+            return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+        } else if (bytes >= 1024 * 1024) {
+            return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+        } else if (bytes >= 1024) {
+            return `${(bytes / 1024).toFixed(2)} KB`;
+        }
+        return `${bytes} B`;
+    };
+
+    const usagePercent = storage.total_storage_bytes > 0
+        ? (storage.used_storage_bytes / storage.total_storage_bytes) * 100
+        : 0;
+
+    return (
+        <div className="space-y-2 mt-3 p-3 bg-muted/40 rounded-xl">
+            <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="w-full flex items-center mb-0 justify-between text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+            >
+                <span className="flex items-center gap-1">
+                    <HardDrive className="w-3 h-3" />
+                    Storage Usage
+                </span>
+                <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                />
+            </button>
+
+            <div className={`overflow-hidden transition-all duration-300 ${isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
+                {/* Event Storage */}
+                <div className="space-y-1 pt-2">
+                    <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-muted-foreground">Event Storage</span>
+                        <span className="font-bold text-foreground">{formatSize(storage.event_storage_bytes)}</span>
+                    </div>
+                </div>
+
+                {/* System Storage */}
+                <div className="space-y-1 pt-2 border-t border-border mt-2">
+                    <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-muted-foreground">System Used</span>
+                        <span className="font-bold text-foreground">{formatSize(storage.used_storage_bytes)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-muted-foreground">Free</span>
+                        <span className="font-bold text-green-600 dark:text-green-400">{formatSize(storage.free_storage_bytes)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-muted-foreground">Total</span>
+                        <span className="font-bold text-foreground">{formatSize(storage.total_storage_bytes)}</span>
+                    </div>
+
+                    {/* Storage Bar */}
+                    <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden mt-2">
+                        <div
+                            className={`h-full transition-all duration-500 rounded-full ${usagePercent > 90 ? 'bg-red-500' :
+                                    usagePercent > 75 ? 'bg-amber-500' :
+                                        'bg-green-500'
+                                }`}
+                            style={{ width: `${Math.min(usagePercent, 100)}%` }}
+                        />
+                    </div>
+                    <div className="text-[9px] text-muted-foreground text-right">
+                        {usagePercent.toFixed(1)}% used
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const CopyButton = ({ slug }: { slug: string }) => {
     const [copied, setCopied] = useState(false);
 
@@ -136,10 +277,10 @@ const CopyButton = ({ slug }: { slug: string }) => {
 
     return (
         <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
             onClick={handleCopy}
-            className="h-9 w-9 p-0 text-foreground border border-border flex-shrink-0 "
+            className="h-9 w-9 p-0 text-foreground border border-border flex-shrink-0 bg-card hover:bg-purple-50 dark:hover:bg-purple-900/20"
         >
             {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
         </Button>
@@ -153,6 +294,18 @@ export default function AdminDashboardClient() {
     const [syncing, setSyncing] = useState<Record<string, boolean>>({});
     const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
     const [driveUrl, setDriveUrl] = useState("");
+    const [showGuestsModal, setShowGuestsModal] = useState(false);
+    const [selectedEventForGuests, setSelectedEventForGuests] = useState<Event | null>(null);
+    const [guests, setGuests] = useState<Guest[]>([]);
+    const [loadingGuests, setLoadingGuests] = useState(false);
+    const [guestFilter, setGuestFilter] = useState("");
+    const [showGalleryModal, setShowGalleryModal] = useState(false);
+    const [selectedEventForGallery, setSelectedEventForGallery] = useState<Event | null>(null);
+    const [photos, setPhotos] = useState<Photo[]>([]);
+    const [loadingPhotos, setLoadingPhotos] = useState(false);
+    const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
+    const [deletingPhotos, setDeletingPhotos] = useState(false);
+
 
     const router = useRouter();
     const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -160,7 +313,7 @@ export default function AdminDashboardClient() {
     const fetchEvents = useCallback(async () => {
         try {
             const token = Cookies.get("admin_token");
-            const response = await fetch(`${API_URL}/events/`, {
+            const response = await fetch(`${API_URL}/events`, {
                 headers: { "Authorization": `Bearer ${token}` }
             });
             if (response.ok) {
@@ -209,7 +362,7 @@ export default function AdminDashboardClient() {
         };
 
         try {
-            const response = await fetch(`${API_URL}/events/`, {
+            const response = await fetch(`${API_URL}/events`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -295,6 +448,183 @@ export default function AdminDashboardClient() {
         router.push("/admin/login");
     };
 
+    const handleShowGuests = async (event: Event) => {
+        setSelectedEventForGuests(event);
+        setShowGuestsModal(true);
+        setLoadingGuests(true);
+        setGuestFilter(""); // Reset filter when opening modal
+
+        try {
+            const token = Cookies.get("admin_token");
+            const response = await fetch(`${API_URL}/guests/event/${event._id}`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setGuests(data.guests || []);
+            } else {
+                toast.error("Failed to load guests");
+            }
+        } catch (error) {
+            console.error("Error fetching guests:", error);
+            toast.error("Network error");
+        } finally {
+            setLoadingGuests(false);
+        }
+    };
+
+    const handleDeleteGuest = async (guestId: string, guestName: string) => {
+        if (!confirm(`Are you sure you want to remove ${guestName}? This will allow them to rescan their face.`)) {
+            return;
+        }
+
+        try {
+            const token = Cookies.get("admin_token");
+            const response = await fetch(`${API_URL}/guests/${guestId}`, {
+                method: "DELETE",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                toast.success(`${guestName} removed successfully`);
+                // Refresh the guests list
+                if (selectedEventForGuests) {
+                    handleShowGuests(selectedEventForGuests);
+                }
+            } else {
+                toast.error("Failed to remove guest");
+            }
+        } catch (error) {
+            console.error("Error deleting guest:", error);
+            toast.error("Network error");
+        }
+    };
+
+    const handleDeleteEvent = async (eventId: string, eventName: string) => {
+        if (!confirm(`⚠️ WARNING: This will permanently delete "${eventName}" and ALL associated data including:\n\n• All photos and thumbnails\n• All guest selfies and data\n• All face recognition data\n\nThis action CANNOT be undone!\n\nAre you absolutely sure?`)) {
+            return;
+        }
+
+        try {
+            const token = Cookies.get("admin_token");
+            const response = await fetch(`${API_URL}/events/${eventId}`, {
+                method: "DELETE",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                toast.success(`Event "${eventName}" deleted successfully. Removed ${data.deleted_photos} photos and ${data.deleted_guests} guests.`);
+                fetchEvents(); // Refresh the events list
+            } else {
+                const error = await response.json();
+                toast.error(error.detail || "Failed to delete event");
+            }
+        } catch (error) {
+            console.error("Error deleting event:", error);
+            toast.error("Network error");
+        }
+    };
+
+    const handleShowGallery = async (event: Event) => {
+        setSelectedEventForGallery(event);
+        setShowGalleryModal(true);
+        setLoadingPhotos(true);
+        setSelectedPhotos(new Set());
+
+        try {
+            const token = Cookies.get("admin_token");
+            const response = await fetch(`${API_URL}/photos/event/${event._id}/gallery?limit=1000`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setPhotos(data.photos || []);
+            } else {
+                toast.error("Failed to load photos");
+            }
+        } catch (error) {
+            console.error("Error fetching photos:", error);
+            toast.error("Network error");
+        } finally {
+            setLoadingPhotos(false);
+        }
+    };
+
+    const togglePhotoSelection = (photoId: string) => {
+        setSelectedPhotos(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(photoId)) {
+                newSet.delete(photoId);
+            } else {
+                newSet.add(photoId);
+            }
+            return newSet;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedPhotos.size === photos.length) {
+            setSelectedPhotos(new Set());
+        } else {
+            setSelectedPhotos(new Set(photos.map(p => p.id)));
+        }
+    };
+
+    const handleDeleteSelectedPhotos = async () => {
+        if (selectedPhotos.size === 0) {
+            toast.error("No photos selected");
+            return;
+        }
+
+        if (!confirm(`Are you sure you want to delete ${selectedPhotos.size} photo(s)? This action cannot be undone.`)) {
+            return;
+        }
+
+        setDeletingPhotos(true);
+        try {
+            const token = Cookies.get("admin_token");
+            const photoIds = Array.from(selectedPhotos);
+
+            const response = await fetch(`${API_URL}/photos/delete/bulk`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(photoIds)
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                toast.success(data.message);
+                // Refresh the gallery
+                if (selectedEventForGallery) {
+                    handleShowGallery(selectedEventForGallery);
+                }
+            } else {
+                toast.error("Failed to delete photos");
+            }
+        } catch (error) {
+            console.error("Error deleting photos:", error);
+            toast.error("Network error");
+        } finally {
+            setDeletingPhotos(false);
+        }
+    };
+
+    // Filter guests based on search input
+    const filteredGuests = guests.filter(guest => {
+        if (!guestFilter.trim()) return true;
+        const searchTerm = guestFilter.toLowerCase();
+        return (
+            guest.name.toLowerCase().includes(searchTerm) ||
+            guest.email.toLowerCase().includes(searchTerm)
+        );
+    });
+
     if (loading) {
         return (
             <div className="flex h-screen items-center justify-center bg-background">
@@ -304,7 +634,7 @@ export default function AdminDashboardClient() {
     }
 
     return (
-        <div className="min-h-screen bg-background p-6 transition-colors duration-300">
+        <div className="bg-background p-6 transition-colors duration-300">
             <header className="max-w-6xl mx-auto flex items-center justify-between mb-8">
                 <div>
                     <h1 className="text-3xl font-bold text-foreground font-sans tracking-tight">Admin Dashboard</h1>
@@ -426,9 +756,11 @@ export default function AdminDashboardClient() {
                                             {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                                         </div>
                                     </div>
-                                    <div className={`p-2 rounded-lg ${event.drive_folder_url ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400' : 'bg-muted text-muted-foreground'}`}>
-                                        <Globe className="w-4 h-4" />
-                                    </div>
+                                    <Button variant="outline" size="sm" className="h-9 w-9 p-0 border-border bg-card" asChild title="Public Page">
+                                        <a href={`/event/${event.slug}`} target="_blank">
+                                            <Globe className="w-4 h-4 text-muted-foreground" />
+                                        </a>
+                                    </Button>
                                 </div>
 
                                 <div className="pt-2">
@@ -438,6 +770,13 @@ export default function AdminDashboardClient() {
                                         syncStatus={event.sync_status}
                                         lastSyncAt={event.last_sync_at}
                                         onSyncComplete={fetchEvents}
+                                    />
+                                </div>
+
+                                <div className="pt-2">
+                                    <StorageDisplay
+                                        eventId={event._id}
+                                        apiUrl={API_URL}
                                     />
                                 </div>
 
@@ -482,11 +821,33 @@ export default function AdminDashboardClient() {
                                             </>
                                         )}
                                     </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-9 w-9 p-0 border border-border bg-card hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+                                        onClick={() => handleShowGuests(event)}
+                                        title="View Guests"
+                                    >
+                                        <Users className="w-4 h-4" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-9 w-9 p-0 border border-border bg-card hover:bg-purple-50 dark:hover:bg-purple-900/20"
+                                        onClick={() => handleShowGallery(event)}
+                                        title="View Gallery"
+                                    >
+                                        <ImageIcon className="w-4 h-4" />
+                                    </Button>
                                     <CopyButton slug={event.slug} />
-                                    <Button variant="outline" size="sm" className="h-9 w-9 p-0 border-border bg-card" asChild title="Public Page">
-                                        <a href={`/event/${event.slug}`} target="_blank">
-                                            <Globe className="w-4 h-4 text-muted-foreground" />
-                                        </a>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-9 w-9 p-0 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                        onClick={() => handleDeleteEvent(event._id, event.name)}
+                                        title="Delete Event"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
                                     </Button>
                                 </div>
                             </CardContent>
@@ -494,6 +855,326 @@ export default function AdminDashboardClient() {
                     ))}
                 </div>
             </div>
+
+            {/* Guests Modal */}
+            {showGuestsModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowGuestsModal(false)}>
+                    <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-6xl w-full max-h-[80vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        <div className="p-6 border-b border-border flex items-center justify-between bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/30 dark:to-purple-950/30">
+                            <div>
+                                <h3 className="text-2xl font-bold text-foreground flex items-center gap-2">
+                                    <Users className="w-6 h-6 text-indigo-600" />
+                                    Event Guests
+                                </h3>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                    {selectedEventForGuests?.name} - {guests.length} guest{guests.length !== 1 ? 's' : ''} joined
+                                </p>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowGuestsModal(false)}
+                                className="h-8 w-8 p-0 rounded-full hover:bg-muted"
+                            >
+                                <X className="w-5 h-5" />
+                            </Button>
+                        </div>
+
+                        {/* Search Filter */}
+                        {!loadingGuests && guests.length > 0 && (
+                            <div className="px-4 sm:px-6 pt-4 pb-2 border-b border-border">
+                                <div className="relative">
+                                    <Input
+                                        type="text"
+                                        placeholder="Search by name or email..."
+                                        value={guestFilter}
+                                        onChange={(e) => setGuestFilter(e.target.value)}
+                                        className="pl-10 bg-background border-border"
+                                    />
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                                    {guestFilter && (
+                                        <button
+                                            onClick={() => setGuestFilter("")}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                </div>
+                                {guestFilter && (
+                                    <p className="text-xs text-muted-foreground mt-2">
+                                        Showing {filteredGuests.length} of {guests.length} guest{guests.length !== 1 ? 's' : ''}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="p-4 sm:p-6 overflow-y-auto max-h-[calc(80vh-120px)]">
+                            {loadingGuests ? (
+                                <div className="flex items-center justify-center py-12">
+                                    <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+                                </div>
+                            ) : guests.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                                    <p className="text-muted-foreground text-lg">No guests have joined this event yet</p>
+                                </div>
+                            ) : filteredGuests.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                                    <p className="text-muted-foreground text-lg">No guests match your search</p>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setGuestFilter("")}
+                                        className="mt-4"
+                                    >
+                                        Clear filter
+                                    </Button>
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto -mx-4 sm:mx-0">
+                                    <table className="w-full min-w-[640px]">
+                                        <thead>
+                                            <tr className="border-b border-border">
+                                                <th className="text-left p-3 text-xs font-bold text-muted-foreground uppercase tracking-wider">Guest</th>
+                                                <th className="text-left p-3 text-xs font-bold text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Contact</th>
+                                                <th className="text-center p-3 text-xs font-bold text-muted-foreground uppercase tracking-wider">Status</th>
+                                                <th className="text-center p-3 text-xs font-bold text-muted-foreground uppercase tracking-wider">Photos</th>
+                                                <th className="text-right p-3 text-xs font-bold text-muted-foreground uppercase tracking-wider">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {filteredGuests.map((guest) => (
+                                                <tr
+                                                    key={guest.id}
+                                                    className="border-b border-border hover:bg-muted/30 transition-colors"
+                                                >
+                                                    <td className="p-3">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="relative flex-shrink-0">
+                                                                {guest.selfie_path ? (
+                                                                    <img
+                                                                        src={`${API_URL}/guests/selfie/${guest.id}`}
+                                                                        alt={guest.name}
+                                                                        className="w-10 h-10 sm:w-12 sm:h-12 rounded-full object-cover border-2 border-indigo-200 dark:border-indigo-800"
+                                                                    />
+                                                                ) : (
+                                                                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white font-bold text-sm sm:text-base border-2 border-indigo-200 dark:border-indigo-800">
+                                                                        {guest.name.charAt(0).toUpperCase()}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <p className="font-bold text-foreground text-sm sm:text-base truncate">{guest.name}</p>
+                                                                <p className="text-xs text-muted-foreground truncate sm:hidden">{guest.email}</p>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-3 hidden sm:table-cell">
+                                                        <p className="text-sm text-foreground truncate">{guest.email}</p>
+                                                        {guest.phone && (
+                                                            <p className="text-xs text-muted-foreground mt-0.5">{guest.phone}</p>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-3 text-center">
+                                                        <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${guest.status === 'completed' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+                                                            guest.status === 'processing' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' :
+                                                                'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                                                            }`}>
+                                                            <span className={`w-1.5 h-1.5 rounded-full ${guest.status === 'completed' ? 'bg-green-500' :
+                                                                guest.status === 'processing' ? 'bg-yellow-500' :
+                                                                    'bg-red-500'
+                                                                }`} />
+                                                            {guest.status}
+                                                        </span>
+                                                    </td>
+                                                    <td className="p-3 text-center">
+                                                        <p className="text-xl sm:text-2xl font-bold text-indigo-600 dark:text-indigo-400">{guest.match_count}</p>
+                                                    </td>
+                                                    <td className="p-3">
+                                                        <div className="flex items-center justify-end gap-2">
+                                                            <Button
+                                                                variant="default"
+                                                                size="sm"
+                                                                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1 h-8 text-xs"
+                                                                asChild
+                                                            >
+                                                                <a href={guest.gallery_link} target="_blank" rel="noopener noreferrer">
+                                                                    <ExternalLink className="w-3 h-3" />
+                                                                    <span className="hidden sm:inline">Gallery</span>
+                                                                </a>
+                                                            </Button>
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 h-8 w-8 p-0"
+                                                                onClick={() => handleDeleteGuest(guest.id, guest.name)}
+                                                                title="Remove guest"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                            </Button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Gallery Modal */}
+            {showGalleryModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowGalleryModal(false)}>
+                    <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-7xl w-full max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        <div className="p-6 border-b border-border flex items-center justify-between bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-950/30 dark:to-pink-950/30">
+                            <div>
+                                <h3 className="text-2xl font-bold text-foreground flex items-center gap-2">
+                                    <ImageIcon className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+                                    Photo Gallery
+                                </h3>
+                                <p className="text-sm text-muted-foreground mt-1">
+                                    {selectedEventForGallery?.name} - {photos.length} photo{photos.length !== 1 ? 's' : ''}
+                                    {selectedPhotos.size > 0 && ` (${selectedPhotos.size} selected)`}
+                                </p>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setShowGalleryModal(false)}
+                                className="h-8 w-8 p-0 rounded-full hover:bg-muted"
+                            >
+                                <X className="w-5 h-5" />
+                            </Button>
+                        </div>
+
+                        {/* Action Bar */}
+                        {!loadingPhotos && photos.length > 0 && (
+                            <div className="px-6 py-3 border-b border-border bg-muted/30 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedPhotos.size === photos.length && photos.length > 0}
+                                            onChange={toggleSelectAll}
+                                            className="w-4 h-4 rounded border-border"
+                                        />
+                                        <span className="text-sm font-medium">Select All</span>
+                                    </label>
+                                    {selectedPhotos.size > 0 && (
+                                        <span className="text-sm text-muted-foreground">
+                                            {selectedPhotos.size} of {photos.length} selected
+                                        </span>
+                                    )}
+                                </div>
+                                {selectedPhotos.size > 0 && (
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={handleDeleteSelectedPhotos}
+                                        disabled={deletingPhotos}
+                                        className="gap-2"
+                                    >
+                                        {deletingPhotos ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                            <Trash2 className="w-4 h-4" />
+                                        )}
+                                        Delete Selected ({selectedPhotos.size})
+                                    </Button>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+                            {loadingPhotos ? (
+                                <div className="flex items-center justify-center py-12">
+                                    <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+                                </div>
+                            ) : photos.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <ImageIcon className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                                    <p className="text-muted-foreground text-lg">No photos in this event yet</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                    {photos.map((photo) => (
+                                        <div
+                                            key={photo.id}
+                                            className={`relative group rounded-lg overflow-hidden border-2 transition-all ${selectedPhotos.has(photo.id)
+                                                ? 'border-purple-500 ring-2 ring-purple-200 dark:ring-purple-800'
+                                                : 'border-border hover:border-purple-300 dark:hover:border-purple-700'
+                                                }`}
+                                        >
+                                            {/* Selection Checkbox */}
+                                            <div className="absolute top-2 left-2 z-10">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedPhotos.has(photo.id)}
+                                                    onChange={() => togglePhotoSelection(photo.id)}
+                                                    className="w-5 h-5 rounded border-2 border-white shadow-lg cursor-pointer"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                            </div>
+
+                                            {/* Photo */}
+                                            <div className="aspect-square bg-muted relative">
+                                                <img
+                                                    src={`${API_URL}/photos/thumbnail/${photo.id}`}
+                                                    alt={photo.original_file_name}
+                                                    className="w-full h-full object-cover cursor-pointer"
+                                                    onClick={() => togglePhotoSelection(photo.id)}
+                                                    onError={(e) => {
+                                                        (e.target as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100"%3E%3Crect fill="%23ddd" width="100" height="100"/%3E%3Ctext fill="%23999" x="50%25" y="50%25" text-anchor="middle" dy=".3em"%3ENo Image%3C/text%3E%3C/svg%3E';
+                                                    }}
+                                                />
+
+                                                {/* Overlay with info */}
+                                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-2">
+                                                    <p className="text-white text-xs text-center truncate w-full px-2">
+                                                        {photo.original_file_name}
+                                                    </p>
+                                                    {photo.faces_count > 0 && (
+                                                        <div className="bg-white/20 backdrop-blur-sm px-2 py-1 rounded text-white text-xs">
+                                                            {photo.faces_count} face{photo.faces_count !== 1 ? 's' : ''}
+                                                        </div>
+                                                    )}
+                                                    <Button
+                                                        variant="secondary"
+                                                        size="sm"
+                                                        className="h-7 text-xs"
+                                                        asChild
+                                                    >
+                                                        <a href={`${API_URL}/photos/original/${photo.id}`} target="_blank" rel="noopener noreferrer">
+                                                            View Full
+                                                        </a>
+                                                    </Button>
+                                                </div>
+                                            </div>
+
+                                            {/* Status Badge */}
+                                            {photo.status !== 'processed' && (
+                                                <div className="absolute top-2 right-2 z-10">
+                                                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${photo.status === 'pending' ? 'bg-yellow-500 text-white' :
+                                                        photo.status === 'error' ? 'bg-red-500 text-white' :
+                                                            'bg-gray-500 text-white'
+                                                        }`}>
+                                                        {photo.status}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

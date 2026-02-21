@@ -102,7 +102,7 @@ export default function EventsListClient() {
     }
 
     return (
-        <div className="min-h-screen bg-background py-12 px-4 transition-colors duration-500">
+        <div className="bg-background py-12 px-4 transition-colors duration-500">
             <div className="max-w-6xl mx-auto space-y-12">
                 {/* Header Section */}
                 <div className="text-center space-y-4">
