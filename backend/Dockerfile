@@ -5,15 +5,19 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Install system dependencies required for OpenCV and face recognition
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
 # Set working directory
 WORKDIR /app
+
+# Install system dependencies required for building Python packages
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    g++ \
+    gcc \
+    cmake \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY requirements.txt .
@@ -21,9 +25,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
-
-# Create directories for persistent storage
-RUN mkdir -p uploads/originals thumbnails
 
 # Expose the API port
 EXPOSE 8000
