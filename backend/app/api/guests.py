@@ -1,3 +1,4 @@
+from typing import Optional, List
 import asyncio
 import os
 import shutil
@@ -24,57 +25,82 @@ os.makedirs(settings.GUEST_SELFIES_DIR, exist_ok=True)
 async def process_guest_request(request_id: str, event_slug: str, name: str,
                                 email: str, selfie_path: str):
     try:
-        # 1. Extract face embedding
-        faces = await asyncio.to_thread(face_service.get_embeddings,
-                                        selfie_path)
+        # 1. Extract face embedding from guest selfie
+        faces = await asyncio.to_thread(face_service.get_embeddings, selfie_path)
         if not faces:
             await db.execute(
                 "UPDATE guests SET status = ?, error = ? WHERE id = ?",
-                ("error", "No face detected in selfie", request_id))
+                ("error", "No face detected in selfie. Please ensure your face is clearly visible.", request_id))
             return
 
-        guest_embedding = faces[0]["embedding"]
+        # Prioritize largest face (greatest bounding box area) in case multiple people/background faces are detected
+        faces.sort(key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]), reverse=True)
+        guest_embedding = np.array(faces[0]["embedding"])
 
-        # 3. Match against stored faces
-        row = await db.fetch_one("SELECT id FROM events WHERE slug = ?",
-                                 (event_slug, ))
-        if not row: return
+        # 2. Get event ID
+        row = await db.fetch_one("SELECT id FROM events WHERE slug = ?", (event_slug, ))
+        if not row:
+            await db.execute(
+                "UPDATE guests SET status = ?, error = ? WHERE id = ?",
+                ("error", "Event not found", request_id))
+            return
         event_id = row["id"]
 
-        matches = []
+        # 3. Match against stored faces using fast vectorized dot products
         rows = await db.fetch_all(
             "SELECT photo_id, embedding_vector FROM faces WHERE event_id = ?",
             (event_id, ))
-        for face_row in rows:
-            # Embedding is stored as JSON string
-            stored_embedding = np.array(
-                json.loads(face_row["embedding_vector"]))
-            score = await asyncio.to_thread(face_service.compute_similarity,
-                                            guest_embedding, stored_embedding)
-            if score >= settings.FACE_SIMILARITY_THRESHOLD:
-                matches.append({
-                    "photo_id": face_row["photo_id"],
-                    "score": score
-                })
 
-        # Deduplicate and sort
+        if not rows:
+            # Event has no indexed faces yet
+            await db.execute(
+                "UPDATE guests SET status = ?, match_count = ?, matched_photo_ids = ? WHERE id = ?",
+                ("completed", 0, "[]", request_id))
+            return
+
+        stored_embeddings = []
+        photo_ids = []
+        for face_row in rows:
+            try:
+                emb = json.loads(face_row["embedding_vector"])
+                stored_embeddings.append(emb)
+                photo_ids.append(face_row["photo_id"])
+            except Exception:
+                continue
+
+        matches = []
+        if stored_embeddings:
+            matrix = np.array(stored_embeddings)  # shape: (N, 512)
+            matrix_norm = np.linalg.norm(matrix, axis=1)
+            g_norm = np.linalg.norm(guest_embedding)
+
+            if g_norm > 0:
+                # Fast matrix cosine similarity across all event faces
+                scores = (matrix @ guest_embedding) / (matrix_norm * g_norm + 1e-10)
+                for idx, score in enumerate(scores):
+                    if float(score) >= settings.FACE_SIMILARITY_THRESHOLD:
+                        matches.append({
+                            "photo_id": photo_ids[idx],
+                            "score": float(score)
+                        })
+
+        # 4. Deduplicate matches by photo_id (keeping highest score per photo)
         unique_matches = {}
         for m in matches:
             p_id = m["photo_id"]
-            if p_id not in unique_matches or m["score"] > unique_matches[p_id][
-                    "score"]:
+            if p_id not in unique_matches or m["score"] > unique_matches[p_id]["score"]:
                 unique_matches[p_id] = m
 
         sorted_matches = sorted(unique_matches.values(),
                                 key=lambda x: x["score"], 
-                                reverse=True)[:50000]
+                                reverse=True)
         matched_photo_ids = [m["photo_id"] for m in sorted_matches]
 
-        # 4. Final Update
+        # 5. Final Update
         await db.execute(
             """
             UPDATE guests SET 
-                status = ?, match_count = ?, matched_photo_ids = ? 
+                status = ?, match_count = ?, matched_photo_ids = ?, error = NULL 
             WHERE id = ?
         """, ("completed", len(matched_photo_ids),
               json.dumps(matched_photo_ids), request_id))
@@ -87,57 +113,86 @@ async def process_guest_request(request_id: str, event_slug: str, name: str,
 
 
 @router.post("/request")
+@router.post("/upload")
 async def guest_request(background_tasks: BackgroundTasks,
                         event_slug: str = Form(...),
                         name: str = Form(...),
-                        email: str = Form(...),
-                        phone: str = Form(None),
-                        secret_code: str = Form(None),
+                        email: Optional[str] = Form(None),
+                        phone: Optional[str] = Form(None),
+                        secret_code: Optional[str] = Form(None),
                         selfie: UploadFile = File(...)):
-    row = await db.fetch_one(
-        "SELECT id, secret_code FROM events WHERE slug = ?", (event_slug, ))
-    if not row:
-        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        clean_name = (name or "").strip()
+        if not clean_name:
+            raise HTTPException(status_code=400, detail="Guest name is required")
 
-    event_id = row["id"]
-    expected_code = row["secret_code"]
+        clean_email = (email or "").strip()
+        if not clean_email:
+            clean_email = f"guest_{uuid.uuid4().hex[:8]}@guest.com"
 
-    if expected_code and expected_code != secret_code:
-        raise HTTPException(status_code=401, detail="Invalid secret code")
+        row = await db.fetch_one(
+            "SELECT id, secret_code FROM events WHERE slug = ?", (event_slug.strip(), ))
+        if not row:
+            raise HTTPException(status_code=404, detail="Event not found")
 
-    existing_request = await db.fetch_one(
-        """
-        SELECT * FROM guests WHERE event_id = ? AND name = ? AND email = ?
-    """, (event_id, name, email))
+        event_id = row["id"]
+        expected_code = row.get("secret_code")
 
-    if existing_request:
+        if expected_code and expected_code.strip():
+            if (secret_code or "").strip() != expected_code.strip():
+                raise HTTPException(status_code=401, detail="Invalid secret code")
+
+        # Ensure uploads directory exists
+        os.makedirs(settings.GUEST_SELFIES_DIR, exist_ok=True)
+
+        request_id = str(uuid.uuid4())
+        raw_ext = (selfie.filename.rsplit(".", 1)[-1] if (selfie.filename and "." in selfie.filename) else "jpg").lower()
+        file_ext = "".join(c for c in raw_ext if c.isalnum()) or "jpg"
+        selfie_path = os.path.join(settings.GUEST_SELFIES_DIR, f"{request_id}.{file_ext}")
+
+        content = await selfie.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded selfie file is empty")
+
+        with open(selfie_path, "wb") as buffer:
+            buffer.write(content)
+
+        existing_request = await db.fetch_one(
+            """
+            SELECT * FROM guests WHERE event_id = ? AND name = ? AND email = ?
+        """, (event_id, clean_name, clean_email))
+
+        if existing_request:
+            # Update existing guest with new selfie and trigger re-match
+            req_id = existing_request["id"]
+            await db.execute(
+                """
+                UPDATE guests SET selfie_path = ?, status = 'processing', error = NULL WHERE id = ?
+            """, (selfie_path, req_id))
+            background_tasks.add_task(process_guest_request, req_id, event_slug, clean_name, clean_email, selfie_path)
+            return {
+                "message": "Updating your photo matches...",
+                "request_id": req_id
+            }
+
+        await db.execute(
+            """
+            INSERT INTO guests (id, event_id, name, email, phone, selfie_path, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (request_id, event_id, clean_name, clean_email, phone, selfie_path, "processing",
+              datetime.utcnow().isoformat()))
+
+        background_tasks.add_task(process_guest_request, request_id, event_slug,
+                                  clean_name, clean_email, selfie_path)
         return {
-            "message": "Found your existing request!",
-            "request_id": existing_request["id"],
-            "status": existing_request["status"]
+            "message": "Your photos are being processed.",
+            "request_id": request_id
         }
-
-    request_id = str(uuid.uuid4())
-    file_ext = selfie.filename.split(".")[-1]
-    selfie_path = os.path.join(settings.GUEST_SELFIES_DIR,
-                               f"{request_id}.{file_ext}")
-
-    with open(selfie_path, "wb") as buffer:
-        shutil.copyfileobj(selfie.file, buffer)
-
-    await db.execute(
-        """
-        INSERT INTO guests (id, event_id, name, email, phone, selfie_path, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (request_id, event_id, name, email, phone, selfie_path, "processing",
-          datetime.utcnow().isoformat()))
-
-    background_tasks.add_task(process_guest_request, request_id, event_slug,
-                              name, email, selfie_path)
-    return {
-        "message": "Your photos are being processed.",
-        "request_id": request_id
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in guest_request: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process selfie submission: {str(e)}")
 
 
 @router.get("/status/{request_id}")

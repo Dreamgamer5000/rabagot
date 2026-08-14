@@ -36,7 +36,8 @@ export default function AdminLoginClient() {
             });
 
             if (!response.ok) {
-                throw new Error("Invalid username or password");
+                const errData = await response.json().catch(() => null);
+                throw new Error(errData?.detail || `Error (${response.status}): Invalid username or password`);
             }
 
             const data = await response.json();

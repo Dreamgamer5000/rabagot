@@ -4,6 +4,7 @@ services:
     container_name: picshare-backend
     volumes:
       - ./data:/app/data:z
+      - ./backend/app:/app/app:z
     env_file:
       - ./backend/.env
     restart: always
@@ -17,8 +18,8 @@ services:
     build:
       context: ./frontend
       args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-        - BACKEND_HOSTNAME=${BACKEND_HOSTNAME}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
+        - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-picshare-backend:8000}
     container_name: picshare-frontend
     ports:
       - "3005:3000"
@@ -27,7 +28,7 @@ services:
     restart: always
     environment:
       - NEXT_PUBLIC_API_URL=/api
-      - BACKEND_HOSTNAME=picshare-backend
+      - BACKEND_HOSTNAME=picshare-backend:8000
 # Define named volumes if you prefer, but host-binding is simpler for VPS deployments
 # volumes:
 #   backend_data:

@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
 
     FACE_SIMILARITY_THRESHOLD: float = 0.6
+    SYNC_CONCURRENCY: int = 4  # Number of photos to process in parallel during Drive sync (1-2 for low-end VPS, 4-8 for standard, 10+ for high-perf)
 
     ADMIN_PASSWORD: str = "admin123"  # Default, should be changed in .env
     SECRET_KEY: str = "ThisIsMyLongSecretKeyForJWT"

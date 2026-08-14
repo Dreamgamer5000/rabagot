@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Camera, Upload, CheckCircle2, Loader2, RefreshCw, XCircle, Lock, UserPlus, ArrowRight, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import Webcam from "react-webcam";
+import { compressImage } from "@/lib/image-compressor";
 
 export default function GuestUploadClient() {
     const params = useParams();
@@ -204,7 +205,6 @@ export default function GuestUploadClient() {
         }
 
         setLoading(true);
-        const formData = new FormData();
         const form = e.currentTarget;
         const nameInput = form.elements.namedItem("name") as HTMLInputElement;
         const emailInput = form.elements.namedItem("email") as HTMLInputElement;
@@ -213,15 +213,19 @@ export default function GuestUploadClient() {
         const email = emailInput.value;
         setSubmittingGuest({ name, email });
 
-        formData.append("event_slug", slug);
-        formData.append("name", name);
-        formData.append("email", email);
-        formData.append("selfie", file);
-        if (secretCode) {
-            formData.append("secret_code", secretCode);
-        }
-
         try {
+            // Compress and optimize selfie client-side to prevent large payload errors and speed up processing
+            const optimizedSelfie = await compressImage(file);
+
+            const formData = new FormData();
+            formData.append("event_slug", slug);
+            formData.append("name", name);
+            formData.append("email", email);
+            formData.append("selfie", optimizedSelfie);
+            if (secretCode) {
+                formData.append("secret_code", secretCode);
+            }
+
             const apiUrl = process.env.NEXT_PUBLIC_API_URL
             const response = await fetch(`${apiUrl}/guests/request`, {
                 method: "POST",
@@ -229,8 +233,21 @@ export default function GuestUploadClient() {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || "Failed to upload");
+                let errorMsg = "Failed to upload";
+                try {
+                    const errorData = await response.json();
+                    if (errorData && errorData.detail) {
+                        errorMsg = typeof errorData.detail === "string" ? errorData.detail : JSON.stringify(errorData.detail);
+                    }
+                } catch {
+                    const text = await response.text().catch(() => "");
+                    if (text && text.length < 200) {
+                        errorMsg = text;
+                    } else if (response.status === 500) {
+                        errorMsg = "Server error processing selfie. Please try again.";
+                    }
+                }
+                throw new Error(errorMsg);
             }
 
             const data = await response.json();

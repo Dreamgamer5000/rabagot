@@ -9,6 +9,7 @@ import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import PhotoLightboxModal, { LightboxPhoto } from "@/components/photo-lightbox-modal";
 
 interface Event {
     _id: string;
@@ -60,6 +61,10 @@ interface StorageInfo {
     event_storage_bytes: number;
     event_storage_mb: number;
     event_storage_gb: number;
+    thumbnails_storage_bytes?: number;
+    originals_storage_bytes?: number;
+    selfies_storage_bytes?: number;
+    cloud_photos_count?: number;
     total_storage_bytes: number;
     total_storage_gb: number;
     free_storage_bytes: number;
@@ -225,9 +230,15 @@ const StorageDisplay = ({ eventId, apiUrl }: { eventId: string, apiUrl: string }
                 {/* Event Storage */}
                 <div className="space-y-1 pt-2">
                     <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">Event Storage</span>
+                        <span className="text-muted-foreground">Local VPS Storage</span>
                         <span className="font-bold text-foreground">{formatSize(storage.event_storage_bytes)}</span>
                     </div>
+                    {storage.cloud_photos_count !== undefined && storage.cloud_photos_count > 0 && (
+                        <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-muted-foreground">Google Drive Cloud</span>
+                            <span className="font-medium text-blue-600 dark:text-blue-400">{storage.cloud_photos_count} photos</span>
+                        </div>
+                    )}
                 </div>
 
                 {/* System Storage */}
@@ -305,6 +316,7 @@ export default function AdminDashboardClient() {
     const [loadingPhotos, setLoadingPhotos] = useState(false);
     const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
     const [deletingPhotos, setDeletingPhotos] = useState(false);
+    const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
 
     const router = useRouter();
@@ -1102,7 +1114,7 @@ export default function AdminDashboardClient() {
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                    {photos.map((photo) => (
+                                    {photos.map((photo, index) => (
                                         <div
                                             key={photo.id}
                                             className={`relative group rounded-lg overflow-hidden border-2 transition-all ${selectedPhotos.has(photo.id)
@@ -1146,12 +1158,14 @@ export default function AdminDashboardClient() {
                                                     <Button
                                                         variant="secondary"
                                                         size="sm"
-                                                        className="h-7 text-xs"
-                                                        asChild
+                                                        className="h-7 text-xs gap-1"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setLightboxIndex(index);
+                                                        }}
                                                     >
-                                                        <a href={`${API_URL}/photos/original/${photo.id}`} target="_blank" rel="noopener noreferrer">
-                                                            View Full
-                                                        </a>
+                                                        <ImageIcon className="w-3 h-3" />
+                                                        View Full
                                                     </Button>
                                                 </div>
                                             </div>
@@ -1175,6 +1189,23 @@ export default function AdminDashboardClient() {
                     </div>
                 </div>
             )}
+
+            {/* Photo Lightbox Modal */}
+            <PhotoLightboxModal
+                photos={photos.map((p) => ({
+                    id: p.id,
+                    filename: p.original_file_name,
+                    thumbnail_url: `${API_URL}/photos/thumbnail/${p.id}`,
+                    original_url: `${API_URL}/photos/original/${p.id}`,
+                    drive_file_id: p.drive_file_id,
+                    faces_count: p.faces_count,
+                    created_at: p.created_at,
+                }))}
+                currentIndex={lightboxIndex}
+                onClose={() => setLightboxIndex(null)}
+                onNavigate={(idx) => setLightboxIndex(idx)}
+                apiUrl={API_URL}
+            />
         </div>
     );
 }

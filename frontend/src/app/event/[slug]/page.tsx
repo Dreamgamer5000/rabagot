@@ -1,10 +1,10 @@
 import { Metadata } from "next";
-import GuestUploadClient from "@/components/guest-upload-client";
+import EventGalleryClient from "@/components/event-gallery-client";
 
 export const metadata: Metadata = {
-    title: "Join Event",
+    title: "Event Gallery",
 };
 
-export default function GuestUploadPage() {
-    return <GuestUploadClient />;
+export default function EventPage() {
+    return <EventGalleryClient />;
 }

@@ -1,33 +1,35 @@
 # Builder stage
-FROM oven/bun:1-slim AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies first (for better caching)
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+# Install dependencies using npm (reliable and robust in Docker)
+COPY package.json ./
+RUN npm install
 
 # Copy the rest of the source code
 COPY . .
 
-# Build-time argument for the API URL
-ARG NEXT_PUBLIC_API_URL
+# Build-time arguments with default fallbacks
+ARG NEXT_PUBLIC_API_URL=/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ARG BACKEND_HOSTNAME
+ARG BACKEND_HOSTNAME=picshare-backend:8000
 ENV BACKEND_HOSTNAME=$BACKEND_HOSTNAME
 
 # Build the Next.js application
-RUN bun run build
+RUN npm run build
 
 # Runner stage
-FROM oven/bun:1-slim AS runner
+FROM node:20-alpine AS runner
 
 WORKDIR /app
 
 # Set production environment
 ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
-# Copy built assets and necessary files from builder
+# Copy built assets and required files
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
@@ -37,5 +39,5 @@ COPY --from=builder /app/next.config.ts ./next.config.ts
 # Expose the app port
 EXPOSE 3000
 
-# Start the application
-CMD ["bun", "run", "start"]
+# Start Next.js
+CMD ["npm", "run", "start"]

@@ -174,29 +174,41 @@ async def get_event_storage(event_id: str):
     
     # Calculate storage used by this event
     event_storage = 0
+    thumbnails_storage = 0
+    originals_storage = 0
+    cloud_photos_count = 0
     
     # 1. Calculate photos storage
     photos = await db.fetch_all("SELECT * FROM photos WHERE event_id = ?", (event_id,))
     for photo in photos:
         photo_id = photo["id"]
+        if photo.get("drive_file_id"):
+            cloud_photos_count += 1
         
-        # Check original photo files
+        # Check original photo files if any remain locally
         for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
             original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
             if os.path.exists(original_path):
-                event_storage += os.path.getsize(original_path)
+                file_size = os.path.getsize(original_path)
+                originals_storage += file_size
+                event_storage += file_size
         
         # Check thumbnail files
         thumbnail_path = photo.get("thumbnail_path")
         if thumbnail_path and os.path.exists(thumbnail_path):
-            event_storage += os.path.getsize(thumbnail_path)
+            file_size = os.path.getsize(thumbnail_path)
+            thumbnails_storage += file_size
+            event_storage += file_size
     
     # 2. Calculate guest selfies storage
+    selfies_storage = 0
     guests = await db.fetch_all("SELECT * FROM guests WHERE event_id = ?", (event_id,))
     for guest in guests:
         selfie_path = guest.get("selfie_path")
         if selfie_path and os.path.exists(selfie_path):
-            event_storage += os.path.getsize(selfie_path)
+            file_size = os.path.getsize(selfie_path)
+            selfies_storage += file_size
+            event_storage += file_size
     
     # 3. Get system storage information
     try:
@@ -220,13 +232,17 @@ async def get_event_storage(event_id: str):
         "event_storage_bytes": event_storage,
         "event_storage_mb": round(event_storage / (1024 * 1024), 2),
         "event_storage_gb": round(event_storage / (1024 * 1024 * 1024), 2),
+        "thumbnails_storage_bytes": thumbnails_storage,
+        "originals_storage_bytes": originals_storage,
+        "selfies_storage_bytes": selfies_storage,
+        "cloud_photos_count": cloud_photos_count,
         "total_storage_bytes": total_storage,
         "total_storage_gb": round(total_storage / (1024 * 1024 * 1024), 2),
         "free_storage_bytes": free_storage,
         "free_storage_gb": round(free_storage / (1024 * 1024 * 1024), 2),
         "used_storage_bytes": used_storage,
         "used_storage_gb": round(used_storage / (1024 * 1024 * 1024), 2),
-        "photo_count"   : len(photos),
+        "photo_count": len(photos),
         "guest_count": len(guests)
     }
 

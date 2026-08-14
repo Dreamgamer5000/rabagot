@@ -49,14 +49,21 @@ async def process_photo(photo_id: str,
         await asyncio.to_thread(thumbnail_service.generate_thumbnail,
                                 original_path, thumb_path)
 
-        # 3. Extract faces
-        faces_data = await asyncio.to_thread(face_service.get_embeddings,
-                                             original_path)
+        # 3. Extract faces (gracefully handle images without faces)
+        try:
+            faces_data = await asyncio.to_thread(face_service.get_embeddings,
+                                                 original_path)
+        except Exception as face_err:
+            print(f"Face extraction warning for {photo_id}: {face_err}")
+            faces_data = []
 
         # 4. Get image size
         def get_image_size(path):
-            with Image.open(path) as img:
-                return img.size
+            try:
+                with Image.open(path) as img:
+                    return img.size
+            except Exception:
+                return (0, 0)
 
         width, height = await asyncio.to_thread(get_image_size, original_path)
 
@@ -73,7 +80,8 @@ async def process_photo(photo_id: str,
         """, (drive_file_id, thumb_path, width, height, len(faces_data),
               "processed", photo_id))
 
-        # 5. Store Faces
+        # 5. Store Faces (clean up any previous faces for this photo first)
+        await db.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
         for f in faces_data:
             face_id = str(uuid.uuid4())
             embedding_json = json.dumps(f["embedding"].tolist(
@@ -92,10 +100,24 @@ async def process_photo(photo_id: str,
             """, (face_id, photo_id, event_id, embedding_json, bbox_json,
                   datetime.utcnow().isoformat()))
 
+        # 6. Ephemeral cleanup: If photo is stored in Google Drive, delete local original
+        # to conserve VPS disk space (Google Drive serves as authoritative cold storage)
+        if drive_file_id and os.path.exists(original_path):
+            try:
+                os.remove(original_path)
+            except Exception as rem_err:
+                print(f"Non-fatal error removing temporary original {original_path}: {rem_err}")
+
     except Exception as e:
         print(f"Error processing photo {photo_id}: {e}")
         await db.execute("UPDATE photos SET status = ? WHERE id = ?",
                          ("error", photo_id))
+        # Ensure temporary file is cleaned up on error if drive_file_id is known
+        if drive_file_id and os.path.exists(original_path):
+            try:
+                os.remove(original_path)
+            except Exception:
+                pass
 
 
 @router.post("/upload")
@@ -160,18 +182,25 @@ async def run_sync_task(event_id: str):
         pending_photos = []
         for f in files_to_sync:
             existing = await db.fetch_one(
-                "SELECT id, status FROM photos WHERE drive_file_id = ?", (f["id"], ))
+                "SELECT id, status, thumbnail_path FROM photos WHERE drive_file_id = ?", (f["id"], ))
             if not existing:
                 new_files.append(f)
-            elif existing["status"] == "pending":
-                photo_id :str = existing["id"]
-                file_ext :str = f['name'].split(".")[-1] if "." in f['name'] else "jpg"  
-                original_path :str = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{file_ext}")
+            elif existing["status"] in ("pending", "error"):
+                photo_id: str = existing["id"]
+                file_ext: str = f['name'].split(".")[-1] if "." in f['name'] else "jpg"  
+                original_path: str = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{file_ext}")
+                pending_photos.append((photo_id, original_path, f))
+            elif existing["status"] == "processed" and (not existing.get("thumbnail_path") or not os.path.exists(existing.get("thumbnail_path") or "")):
+                # Thumbnail missing on disk, queue for re-processing
+                photo_id = existing["id"]
+                file_ext = f['name'].split(".")[-1] if "." in f['name'] else "jpg"
+                original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{file_ext}")
                 pending_photos.append((photo_id, original_path, f))
             else:
-                print(f"Skipping already synced file: {f['name']}")
+                # Fully synced & processed with valid thumbnail on disk: skip!
+                pass
 
-        print(f"Identified {len(pending_photos)} pending photos to index")
+        print(f"Identified {len(pending_photos)} pending/errored photos to re-index")
         print(f"Identified {len(new_files)} new photos to index")
 
         # Pre-register all new photos
@@ -190,30 +219,54 @@ async def run_sync_task(event_id: str):
                   datetime.utcnow().isoformat()))
             inserted_items.append((photo_id, original_path, f))
 
-        # download and process
-        for photo_id, original_path, f in pending_photos + inserted_items:
-            try:
-                print(f"Downloading & Processing: {f['name']}")
-                content, filename = await drive_service.download_file(f["id"])
-                if not content:
-                    await db.execute(
-                        "UPDATE photos SET status = ? WHERE id = ?",
-                        ("error", photo_id))
-                    continue
+        # Ephemeral download and processing with configurable concurrency
+        concurrency = max(1, getattr(settings, "SYNC_CONCURRENCY", 4))
+        semaphore = asyncio.Semaphore(concurrency)
+        all_to_process = pending_photos + inserted_items
+        total_to_process = len(all_to_process)
+        processed_count = 0
+        counter_lock = asyncio.Lock()
 
-                with open(original_path, "wb") as buffer:
-                    buffer.write(content)
+        async def process_sync_item(item):
+            nonlocal processed_count
+            photo_id, original_path, f = item
+            async with semaphore:
+                async with counter_lock:
+                    processed_count += 1
+                    current_idx = processed_count
+                try:
+                    print(f"[{current_idx}/{total_to_process}] Downloading & Processing: {f['name']} (parallel workers: {concurrency})")
+                    content, filename = await drive_service.download_file(f["id"])
+                    if not content:
+                        await db.execute(
+                            "UPDATE photos SET status = ? WHERE id = ?",
+                            ("error", photo_id))
+                        return
 
-                await process_photo(photo_id,
-                                    event_id,
-                                    event["slug"],
-                                    original_path,
-                                    filename,
-                                    drive_file_id=f["id"])
-            except Exception as loop_err:
-                print(f"Error processing synced photo {f['name']}: {loop_err}")
-                await db.execute("UPDATE photos SET status = ? WHERE id = ?",
-                                 ("error", photo_id))
+                    with open(original_path, "wb") as buffer:
+                        buffer.write(content)
+
+                    await process_photo(photo_id,
+                                        event_id,
+                                        event["slug"],
+                                        original_path,
+                                        filename,
+                                        drive_file_id=f["id"])
+                except Exception as loop_err:
+                    print(f"Error processing synced photo {f['name']}: {loop_err}")
+                    await db.execute("UPDATE photos SET status = ? WHERE id = ?",
+                                     ("error", photo_id))
+                finally:
+                    # Guarantee local temp file is removed
+                    if os.path.exists(original_path):
+                        try:
+                            os.remove(original_path)
+                        except Exception:
+                            pass
+                    await asyncio.sleep(0.01)
+
+        if all_to_process:
+            await asyncio.gather(*(process_sync_item(item) for item in all_to_process))
 
         await db.execute(
             """
@@ -239,6 +292,54 @@ async def start_sync(event_id: str, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(run_sync_task, event_id)
     return {"message": "Sync started in background"}
+
+
+@router.post("/retry-errors/{event_id}")
+async def retry_error_photos(event_id: str, background_tasks: BackgroundTasks):
+    """Re-attempts processing for all photos marked as error in an event"""
+    error_photos = await db.fetch_all(
+        "SELECT id, original_file_name, drive_file_id FROM photos WHERE event_id = ? AND status = 'error'",
+        (event_id,)
+    )
+    if not error_photos:
+        return {"message": "No errored photos found to retry", "count": 0}
+
+    event = await db.fetch_one("SELECT slug FROM events WHERE id = ?", (event_id,))
+    event_slug = event["slug"] if event else "default"
+
+    async def retry_task():
+        concurrency = max(1, getattr(settings, "SYNC_CONCURRENCY", 4))
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def process_retry_item(p):
+            photo_id = p["id"]
+            file_ext = p["original_file_name"].split(".")[-1] if "." in p["original_file_name"] else "jpg"
+            original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{file_ext}")
+            drive_file_id = p.get("drive_file_id")
+            async with semaphore:
+                try:
+                    if drive_file_id and not os.path.exists(original_path):
+                        content, filename = await drive_service.download_file(drive_file_id)
+                        if content:
+                            with open(original_path, "wb") as buffer:
+                                buffer.write(content)
+                    if os.path.exists(original_path):
+                        await process_photo(photo_id, event_id, event_slug, original_path, p["original_file_name"], drive_file_id)
+                except Exception as e:
+                    print(f"Error retrying photo {photo_id}: {e}")
+                    await db.execute("UPDATE photos SET status = 'error' WHERE id = ?", (photo_id,))
+                finally:
+                    if drive_file_id and os.path.exists(original_path):
+                        try:
+                            os.remove(original_path)
+                        except Exception:
+                            pass
+                    await asyncio.sleep(0.01)
+
+        await asyncio.gather(*(process_retry_item(p) for p in error_photos))
+
+    background_tasks.add_task(retry_task)
+    return {"message": f"Started re-processing {len(error_photos)} photos", "count": len(error_photos)}
 
 
 @router.get("/status/{event_id}")
@@ -316,7 +417,65 @@ async def get_event_photos(event_id: str, page: int = 1, limit: int = 100):
         "total": total,
         "page": page,
         "limit": limit,
-        "total_pages": (total + limit - 1) // limit
+        "total_pages": (total + limit - 1) // limit if limit > 0 else 1
+    }
+
+
+@router.get("/public/{slug}/gallery")
+async def get_public_event_photos(slug: str, page: int = 1, limit: int = 50):
+    """Get public photos for an event by its slug with pagination"""
+    event = await db.fetch_one("SELECT id, name, slug, date, secret_code FROM events WHERE slug = ?", (slug,))
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    event_id = event["id"]
+    offset = (page - 1) * limit
+    
+    count_result = await db.fetch_one(
+        "SELECT COUNT(*) as total FROM photos WHERE event_id = ? AND status = 'processed'",
+        (event_id,)
+    )
+    total = count_result["total"]
+    
+    photos = await db.fetch_all(
+        """
+        SELECT id, original_file_name, thumbnail_path, width, height, 
+               faces_count, status, created_at, drive_file_id
+        FROM photos 
+        WHERE event_id = ? AND status = 'processed'
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (event_id, limit, offset)
+    )
+    
+    return {
+        "event": {
+            "_id": event["id"],
+            "id": event["id"],
+            "name": event["name"],
+            "slug": event["slug"],
+            "date": event["date"],
+            "is_protected": bool(event.get("secret_code"))
+        },
+        "photos": [
+            {
+                "id": p["id"],
+                "filename": p["original_file_name"],
+                "thumbnail_url": f"/photos/thumbnail/{p['id']}",
+                "original_url": f"/photos/original/{p['id']}",
+                "drive_file_id": p.get("drive_file_id"),
+                "faces_count": p.get("faces_count", 0),
+                "width": p.get("width"),
+                "height": p.get("height"),
+                "created_at": p.get("created_at")
+            }
+            for p in photos
+        ],
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": (total + limit - 1) // limit if limit > 0 else 1
     }
 
 
@@ -422,8 +581,10 @@ async def get_original(photo_id: str):
             content, filename = await drive_service.download_file(
                 photo["drive_file_id"])
             if content:
+                ext = (filename.rsplit(".", 1)[-1] if "." in filename else "jpg").lower()
+                media_type = f"image/{ext}" if ext in ["jpeg", "png", "webp", "gif"] else "image/jpeg"
                 return StreamingResponse(io.BytesIO(content),
-                                         media_type="image/jpeg")
+                                         media_type=media_type)
         except Exception as e:
             print(f"Drive fetch error: {e}")
 
