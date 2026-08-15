@@ -6,14 +6,14 @@ export function Footer() {
                     © 2026 PicShare AI. All rights reserved.
                 </p>
                 <p className="md:pb-0 pb-2 text-sm text-muted-foreground">
-                    Made with <span className="text-red-500 animate-pulse">❤️</span> by{" "}
+                    Built with <span className="text-red-500 animate-pulse">❤️</span> for{" "}
                     <a
-                        href="https://github.com/yashoswalyo"
+                        href="https://github.com/Dreamgamer5000/rabogat"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-medium text-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
                     >
-                        yashoswalyo
+                        Event Photographers
                     </a>
                 </p>
             </div>
