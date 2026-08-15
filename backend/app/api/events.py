@@ -175,6 +175,7 @@ async def get_event_storage(event_id: str):
     # Calculate storage used by this event
     event_storage = 0
     thumbnails_storage = 0
+    previews_storage = 0
     originals_storage = 0
     cloud_photos_count = 0
     
@@ -198,6 +199,13 @@ async def get_event_storage(event_id: str):
         if thumbnail_path and os.path.exists(thumbnail_path):
             file_size = os.path.getsize(thumbnail_path)
             thumbnails_storage += file_size
+            event_storage += file_size
+
+        # Check 2K preview files
+        preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
+        if os.path.exists(preview_path):
+            file_size = os.path.getsize(preview_path)
+            previews_storage += file_size
             event_storage += file_size
     
     # 2. Calculate guest selfies storage
@@ -233,6 +241,7 @@ async def get_event_storage(event_id: str):
         "event_storage_mb": round(event_storage / (1024 * 1024), 2),
         "event_storage_gb": round(event_storage / (1024 * 1024 * 1024), 2),
         "thumbnails_storage_bytes": thumbnails_storage,
+        "previews_storage_bytes": previews_storage,
         "originals_storage_bytes": originals_storage,
         "selfies_storage_bytes": selfies_storage,
         "cloud_photos_count": cloud_photos_count,

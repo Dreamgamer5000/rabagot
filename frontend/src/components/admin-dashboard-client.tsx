@@ -62,6 +62,7 @@ interface StorageInfo {
     event_storage_mb: number;
     event_storage_gb: number;
     thumbnails_storage_bytes?: number;
+    previews_storage_bytes?: number;
     originals_storage_bytes?: number;
     selfies_storage_bytes?: number;
     cloud_photos_count?: number;
@@ -230,11 +231,23 @@ const StorageDisplay = ({ eventId, apiUrl }: { eventId: string, apiUrl: string }
                 {/* Event Storage */}
                 <div className="space-y-1 pt-2">
                     <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">Local VPS Storage</span>
+                        <span className="text-muted-foreground">Local SSD Storage</span>
                         <span className="font-bold text-foreground">{formatSize(storage.event_storage_bytes)}</span>
                     </div>
+                    {storage.thumbnails_storage_bytes !== undefined && (
+                        <div className="flex items-center justify-between text-[9px] text-muted-foreground pl-1">
+                            <span>• Thumbnails</span>
+                            <span>{formatSize(storage.thumbnails_storage_bytes)}</span>
+                        </div>
+                    )}
+                    {storage.previews_storage_bytes !== undefined && (
+                        <div className="flex items-center justify-between text-[9px] text-muted-foreground pl-1">
+                            <span>• 2K Previews</span>
+                            <span>{formatSize(storage.previews_storage_bytes)}</span>
+                        </div>
+                    )}
                     {storage.cloud_photos_count !== undefined && storage.cloud_photos_count > 0 && (
-                        <div className="flex items-center justify-between text-[10px]">
+                        <div className="flex items-center justify-between text-[10px] pt-1">
                             <span className="text-muted-foreground">Google Drive Cloud</span>
                             <span className="font-medium text-blue-600 dark:text-blue-400">{storage.cloud_photos_count} photos</span>
                         </div>
@@ -1196,6 +1209,7 @@ export default function AdminDashboardClient() {
                     id: p.id,
                     filename: p.original_file_name,
                     thumbnail_url: `/photos/thumbnail/${p.id}`,
+                    preview_url: `/photos/preview/${p.id}`,
                     original_url: `/photos/original/${p.id}`,
                     drive_file_id: p.drive_file_id,
                     faces_count: p.faces_count,

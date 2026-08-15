@@ -9,7 +9,8 @@ export interface LightboxPhoto {
     id: string;
     filename: string;
     thumbnail_url?: string;
-    original_url: string;
+    preview_url?: string;
+    original_url?: string;
     drive_file_id?: string;
     faces_count?: number;
     created_at?: string;
@@ -134,7 +135,7 @@ export default function PhotoLightboxModal({
         return `${cleanApiUrl}${cleanPath}`;
     };
 
-    const originalSrc = resolveUrl(currentPhoto.original_url, `/photos/original/${currentPhoto.id}`);
+    const previewSrc = resolveUrl(currentPhoto.preview_url, `/photos/preview/${currentPhoto.id}`);
     const thumbnailSrc = resolveUrl(currentPhoto.thumbnail_url, `/photos/thumbnail/${currentPhoto.id}`);
     const downloadSrc = resolveUrl("", `/photos/download/${currentPhoto.id}`);
 
@@ -220,7 +221,7 @@ export default function PhotoLightboxModal({
                 {imageLoading && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/70 z-20 pointer-events-none">
                         <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
-                        <span className="text-sm font-medium">Loading high-res photo...</span>
+                        <span className="text-sm font-medium">Loading high-res preview...</span>
                     </div>
                 )}
 
@@ -255,10 +256,10 @@ export default function PhotoLightboxModal({
                                     />
                                 )}
 
-                                {/* High-res original photo */}
+                                {/* High-res 2K WebP screen preview */}
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
-                                    src={originalSrc}
+                                    src={previewSrc}
                                     alt={currentPhoto.filename}
                                     onLoad={() => setImageLoading(false)}
                                     className={`max-w-full max-h-[85vh] object-contain select-none transition-opacity duration-300 rounded-md ${

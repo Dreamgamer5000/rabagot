@@ -44,10 +44,13 @@ async def process_photo(photo_id: str,
                                                              event_slug,
                                                              filename=filename)
 
-        # 2. Generate Thumbnail
+        # 2. Generate Thumbnail (512px) and 2K WebP Screen Preview (2048px)
         thumb_path = os.path.join(settings.THUMBNAIL_ROOT, f"{photo_id}.jpg")
+        preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
         await asyncio.to_thread(thumbnail_service.generate_thumbnail,
                                 original_path, thumb_path)
+        await asyncio.to_thread(thumbnail_service.generate_preview,
+                                original_path, preview_path, 2048, 82)
 
         # 3. Extract faces (gracefully handle images without faces)
         try:
@@ -191,10 +194,17 @@ async def run_sync_task(event_id: str):
             if ep["drive_file_id"] not in active_drive_ids:
                 print(f"Pruning photo deleted from Drive: {ep.get('original_file_name')} ({p_id})")
                 await db.execute("DELETE FROM faces WHERE photo_id = ?", (p_id,))
+                # Clean up thumbnail and preview
                 thumb = ep.get("thumbnail_path")
                 if thumb and os.path.exists(thumb):
                     try:
                         os.remove(thumb)
+                    except Exception:
+                        pass
+                preview = os.path.join(settings.PREVIEWS_ROOT, f"{p_id}.webp")
+                if os.path.exists(preview):
+                    try:
+                        os.remove(preview)
                     except Exception:
                         pass
                 for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
@@ -232,15 +242,18 @@ async def run_sync_task(event_id: str):
                 file_ext: str = f['name'].split(".")[-1] if "." in f['name'] else "jpg"  
                 original_path: str = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{file_ext}")
                 pending_photos.append((photo_id, original_path, f))
-            elif existing["status"] == "processed" and (not existing.get("thumbnail_path") or not os.path.exists(existing.get("thumbnail_path") or "")):
-                # Thumbnail missing on disk, queue for re-processing
-                photo_id = existing["id"]
-                file_ext = f['name'].split(".")[-1] if "." in f['name'] else "jpg"
-                original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{file_ext}")
-                pending_photos.append((photo_id, original_path, f))
             else:
-                # Fully synced & processed with valid thumbnail on disk: skip!
-                pass
+                photo_id = existing["id"]
+                thumb_missing = not existing.get("thumbnail_path") or not os.path.exists(existing.get("thumbnail_path") or "")
+                preview_missing = not os.path.exists(os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp"))
+                if existing["status"] == "processed" and (thumb_missing or preview_missing):
+                    # Thumbnail or 2K preview missing on disk, queue for processing
+                    file_ext = f['name'].split(".")[-1] if "." in f['name'] else "jpg"
+                    original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{file_ext}")
+                    pending_photos.append((photo_id, original_path, f))
+                else:
+                    # Fully synced & processed with valid thumbnail and 2K preview on disk: skip!
+                    pass
 
         print(f"Identified {len(pending_photos)} pending/errored photos to re-index")
         print(f"Identified {len(new_files)} new photos to index")
@@ -455,7 +468,23 @@ async def get_event_photos(event_id: str, page: int = 1, limit: int = 100):
     )
     
     return {
-        "photos": [dict(p) for p in photos],
+        "photos": [
+            {
+                "id": p["id"],
+                "filename": p["original_file_name"],
+                "original_file_name": p["original_file_name"],
+                "thumbnail_url": f"/photos/thumbnail/{p['id']}",
+                "preview_url": f"/photos/preview/{p['id']}",
+                "original_url": f"/photos/original/{p['id']}",
+                "drive_file_id": p.get("drive_file_id"),
+                "faces_count": p.get("faces_count", 0),
+                "width": p.get("width"),
+                "height": p.get("height"),
+                "status": p.get("status"),
+                "created_at": p.get("created_at")
+            }
+            for p in photos
+        ],
         "total": total,
         "page": page,
         "limit": limit,
@@ -505,6 +534,7 @@ async def get_public_event_photos(slug: str, page: int = 1, limit: int = 50):
                 "id": p["id"],
                 "filename": p["original_file_name"],
                 "thumbnail_url": f"/photos/thumbnail/{p['id']}",
+                "preview_url": f"/photos/preview/{p['id']}",
                 "original_url": f"/photos/original/{p['id']}",
                 "drive_file_id": p.get("drive_file_id"),
                 "faces_count": p.get("faces_count", 0),
@@ -538,13 +568,19 @@ async def delete_photo(photo_id: str):
                 except Exception as e:
                     print(f"Error deleting original {original_path}: {e}")
         
-        # Delete thumbnail
+        # Delete thumbnail and preview
         thumbnail_path = photo.get("thumbnail_path")
         if thumbnail_path and os.path.exists(thumbnail_path):
             try:
                 os.remove(thumbnail_path)
             except Exception as e:
                 print(f"Error deleting thumbnail {thumbnail_path}: {e}")
+        preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
+        if os.path.exists(preview_path):
+            try:
+                os.remove(preview_path)
+            except Exception as e:
+                print(f"Error deleting preview {preview_path}: {e}")
         
         # Delete from database
         await db.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
@@ -578,13 +614,19 @@ async def delete_photos_bulk(photo_ids: List[str]):
                     except Exception as e:
                         print(f"Error deleting original {original_path}: {e}")
             
-            # Delete thumbnail
+            # Delete thumbnail and preview
             thumbnail_path = photo.get("thumbnail_path")
             if thumbnail_path and os.path.exists(thumbnail_path):
                 try:
                     os.remove(thumbnail_path)
                 except Exception as e:
                     print(f"Error deleting thumbnail {thumbnail_path}: {e}")
+            preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
+            if os.path.exists(preview_path):
+                try:
+                    os.remove(preview_path)
+                except Exception as e:
+                    print(f"Error deleting preview {preview_path}: {e}")
             
             # Delete from database
             await db.execute("DELETE FROM faces WHERE photo_id = ?", (photo_id,))
@@ -631,6 +673,53 @@ async def get_original(photo_id: str):
             print(f"Drive fetch error: {e}")
 
     raise HTTPException(status_code=404, detail="Original file not found")
+
+
+@router.get("/preview/{photo_id}")
+async def get_preview(photo_id: str):
+    """Fast 2K WebP screen preview for instant fullscreen viewing with lazy generation fallback"""
+    preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
+    if os.path.exists(preview_path):
+        return FileResponse(preview_path, media_type="image/webp")
+
+    # Fallback 1: If original exists on local disk, generate 2K preview on-the-fly
+    for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+        orig_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+        if os.path.exists(orig_path):
+            try:
+                await asyncio.to_thread(thumbnail_service.generate_preview, orig_path, preview_path, 2048, 82)
+                if os.path.exists(preview_path):
+                    return FileResponse(preview_path, media_type="image/webp")
+            except Exception as e:
+                print(f"Error generating preview from local original: {e}")
+
+    # Fallback 2: Lazy on-demand backfill from Google Drive
+    row = await db.fetch_one("SELECT drive_file_id, original_file_name, thumbnail_path FROM photos WHERE id = ?", (photo_id,))
+    if row and row.get("drive_file_id"):
+        try:
+            content, _ = await drive_service.download_file(row["drive_file_id"])
+            if content:
+                temp_orig = os.path.join(settings.UPLOAD_ROOT, f"temp_{photo_id}.tmp")
+                os.makedirs(os.path.dirname(temp_orig), exist_ok=True)
+                with open(temp_orig, "wb") as f:
+                    f.write(content)
+                await asyncio.to_thread(thumbnail_service.generate_preview, temp_orig, preview_path, 2048, 82)
+                if os.path.exists(temp_orig):
+                    try:
+                        os.remove(temp_orig)
+                    except Exception:
+                        pass
+                if os.path.exists(preview_path):
+                    return FileResponse(preview_path, media_type="image/webp")
+        except Exception as drive_err:
+            print(f"Lazy preview backfill error for {photo_id}: {drive_err}")
+
+    # Fallback 3: Fall back to thumbnail if available
+    thumb_path = os.path.join(settings.THUMBNAIL_ROOT, f"{photo_id}.jpg")
+    if os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/jpeg")
+
+    raise HTTPException(status_code=404, detail="Preview file not found")
 
 
 @router.get("/thumbnail/{photo_id}")

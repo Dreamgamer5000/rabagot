@@ -315,6 +315,7 @@ async def get_guest_matches(request_id: str, page: int = 1, limit: int = 50):
             "id": p["id"],
             "filename": p.get("original_file_name"),
             "thumbnail_url": f"/photos/thumbnail/{p['id']}",
+            "preview_url": f"/photos/preview/{p['id']}",
             "original_url": f"/photos/original/{p['id']}",
             "drive_file_id": p.get("drive_file_id")
         }

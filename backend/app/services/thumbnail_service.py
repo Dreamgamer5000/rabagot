@@ -32,4 +32,20 @@ class ThumbnailService:
             img.thumbnail(size, Image.Resampling.LANCZOS)
             img.save(output_path, "JPEG", quality=85, optimize=True)
 
+    @staticmethod
+    def generate_preview(image_path: str, output_path: str, max_dim: int = 2048, quality: int = 82):
+        """Generates a 2K WebP screen preview (~250-350KB) for instant <50ms fullscreen viewing"""
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with Image.open(image_path) as img:
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            img.save(output_path, "WEBP", quality=quality, method=4)
+
 thumbnail_service = ThumbnailService()

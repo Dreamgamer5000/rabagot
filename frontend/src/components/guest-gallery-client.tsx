@@ -13,6 +13,7 @@ interface Photo {
     id: string;
     filename: string;
     thumbnail_url: string;
+    preview_url?: string;
     original_url: string;
     drive_file_id: string;
 }
@@ -570,7 +571,7 @@ export default function GuestGalleryClient() {
                                         onTouchEnd={handleTouchEnd}
                                     >
                                         <Image
-                                            src={`${API_URL}${currentPreviewPhoto.original_url}`}
+                                            src={`${API_URL}${currentPreviewPhoto.preview_url || currentPreviewPhoto.original_url}`}
                                             alt={currentPreviewPhoto.filename}
                                             fill
                                             className={`object-contain transition-all duration-500 ${previewLoading ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}

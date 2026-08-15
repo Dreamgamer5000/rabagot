@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     SERVICE_ACCOUNTS_DIR: str = "data/accounts"
     UPLOAD_ROOT: str = "data/uploads/originals"
     THUMBNAIL_ROOT: str = "data/thumbnails"
+    PREVIEWS_ROOT: str = "data/previews"
     FACE_MODEL_ROOT: str = "data/insightface"
     GUEST_SELFIES_DIR: str = "data/uploads/selfies"
     class Config:
