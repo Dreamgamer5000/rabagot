@@ -1195,8 +1195,8 @@ export default function AdminDashboardClient() {
                 photos={photos.map((p) => ({
                     id: p.id,
                     filename: p.original_file_name,
-                    thumbnail_url: `${API_URL}/photos/thumbnail/${p.id}`,
-                    original_url: `${API_URL}/photos/original/${p.id}`,
+                    thumbnail_url: `/photos/thumbnail/${p.id}`,
+                    original_url: `/photos/original/${p.id}`,
                     drive_file_id: p.drive_file_id,
                     faces_count: p.faces_count,
                     created_at: p.created_at,

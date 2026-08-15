@@ -36,6 +36,13 @@ app.include_router(events.router)
 app.include_router(photos.router)
 app.include_router(guests.router)
 
+# Also mount with /api prefix for proxy rewrite compatibility
+app.include_router(auth.router, prefix="/api")
+app.include_router(events.router, prefix="/api")
+app.include_router(photos.router, prefix="/api")
+app.include_router(guests.router, prefix="/api")
+
 @app.get("/")
+@app.get("/api")
 def read_root():
     return {"message": "Drive Photo Sharing API is running"}
