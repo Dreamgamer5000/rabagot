@@ -171,7 +171,7 @@ const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }
 const StorageDisplay = ({ eventId, apiUrl }: { eventId: string, apiUrl: string }) => {
     const [storage, setStorage] = useState<StorageInfo | null>(null);
     const [loading, setLoading] = useState(true);
-    const [isExpanded, setIsExpanded] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(true);
 
     useEffect(() => {
         const fetchStorage = async () => {
@@ -194,7 +194,7 @@ const StorageDisplay = ({ eventId, apiUrl }: { eventId: string, apiUrl: string }
         fetchStorage();
     }, [eventId, apiUrl]);
 
-    if (loading) return <div className="h-16 w-full bg-muted animate-pulse rounded-lg mt-2" />;
+    if (loading) return <div className="h-16 w-full bg-muted animate-pulse rounded-xl mt-2" />;
     if (!storage) return null;
 
     const formatSize = (bytes: number) => {
@@ -213,74 +213,72 @@ const StorageDisplay = ({ eventId, apiUrl }: { eventId: string, apiUrl: string }
         : 0;
 
     return (
-        <div className="space-y-2 mt-3 p-3 bg-muted/40 rounded-xl">
+        <div className="space-y-2 mt-3 p-3 bg-muted/40 rounded-xl border border-border/40">
             <button
                 onClick={() => setIsExpanded(!isExpanded)}
-                className="w-full flex items-center mb-0 justify-between text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+                className="w-full flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
             >
-                <span className="flex items-center gap-1">
-                    <HardDrive className="w-3 h-3" />
-                    Storage Usage
+                <span className="flex items-center gap-1.5 text-foreground">
+                    <HardDrive className="w-3.5 h-3.5 text-indigo-500" />
+                    Storage Breakdown
                 </span>
-                <ChevronDown
-                    className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                />
+                <div className="flex items-center gap-2">
+                    <span className="font-bold text-foreground text-[10px] normal-case bg-background/80 px-2 py-0.5 rounded-md border border-border/50">
+                        {formatSize(storage.event_storage_bytes)} SSD
+                    </span>
+                    <ChevronDown
+                        className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                    />
+                </div>
             </button>
 
             <div className={`overflow-hidden transition-all duration-300 ${isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
-                {/* Event Storage */}
-                <div className="space-y-1 pt-2">
+                {/* Event Storage Breakdown */}
+                <div className="space-y-1.5 pt-2 border-t border-border/40 mt-1">
                     <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">Local SSD Storage</span>
+                        <span className="text-muted-foreground">Local SSD Used</span>
                         <span className="font-bold text-foreground">{formatSize(storage.event_storage_bytes)}</span>
                     </div>
-                    {storage.thumbnails_storage_bytes !== undefined && (
-                        <div className="flex items-center justify-between text-[9px] text-muted-foreground pl-1">
-                            <span>• Thumbnails</span>
-                            <span>{formatSize(storage.thumbnails_storage_bytes)}</span>
-                        </div>
-                    )}
                     {storage.previews_storage_bytes !== undefined && (
-                        <div className="flex items-center justify-between text-[9px] text-muted-foreground pl-1">
-                            <span>• 2K Previews</span>
-                            <span>{formatSize(storage.previews_storage_bytes)}</span>
+                        <div className="flex items-center justify-between text-[9px] text-muted-foreground pl-2 border-l-2 border-indigo-500/40">
+                            <span>2K Screen Previews</span>
+                            <span className="font-medium text-foreground">{formatSize(storage.previews_storage_bytes)}</span>
                         </div>
                     )}
-                    {storage.cloud_photos_count !== undefined && storage.cloud_photos_count > 0 && (
-                        <div className="flex items-center justify-between text-[10px] pt-1">
+                    {storage.thumbnails_storage_bytes !== undefined && (
+                        <div className="flex items-center justify-between text-[9px] text-muted-foreground pl-2 border-l-2 border-indigo-500/40">
+                            <span>Grid Thumbnails</span>
+                            <span className="font-medium text-foreground">{formatSize(storage.thumbnails_storage_bytes)}</span>
+                        </div>
+                    )}
+                    {storage.selfies_storage_bytes !== undefined && storage.selfies_storage_bytes > 0 && (
+                        <div className="flex items-center justify-between text-[9px] text-muted-foreground pl-2 border-l-2 border-indigo-500/40">
+                            <span>Guest Selfies</span>
+                            <span className="font-medium text-foreground">{formatSize(storage.selfies_storage_bytes)}</span>
+                        </div>
+                    )}
+                    {storage.cloud_photos_count !== undefined && (
+                        <div className="flex items-center justify-between text-[10px] pt-1 border-t border-border/30 mt-1">
                             <span className="text-muted-foreground">Google Drive Cloud</span>
-                            <span className="font-medium text-blue-600 dark:text-blue-400">{storage.cloud_photos_count} photos</span>
+                            <span className="font-bold text-blue-600 dark:text-blue-400">{storage.cloud_photos_count} photos</span>
                         </div>
                     )}
                 </div>
 
-                {/* System Storage */}
-                <div className="space-y-1 pt-2 border-t border-border mt-2">
-                    <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">System Used</span>
-                        <span className="font-bold text-foreground">{formatSize(storage.used_storage_bytes)}</span>
+                {/* System Storage Bar */}
+                <div className="space-y-1 pt-2 border-t border-border/40 mt-2">
+                    <div className="flex items-center justify-between text-[9px] text-muted-foreground">
+                        <span>Server Disk ({formatSize(storage.free_storage_bytes)} free)</span>
+                        <span className="font-semibold">{usagePercent.toFixed(1)}% used</span>
                     </div>
-                    <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">Free</span>
-                        <span className="font-bold text-green-600 dark:text-green-400">{formatSize(storage.free_storage_bytes)}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">Total</span>
-                        <span className="font-bold text-foreground">{formatSize(storage.total_storage_bytes)}</span>
-                    </div>
-
-                    {/* Storage Bar */}
-                    <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden mt-2">
+                    <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
                         <div
                             className={`h-full transition-all duration-500 rounded-full ${usagePercent > 90 ? 'bg-red-500' :
                                     usagePercent > 75 ? 'bg-amber-500' :
-                                        'bg-green-500'
+                                        'bg-indigo-500'
                                 }`}
                             style={{ width: `${Math.min(usagePercent, 100)}%` }}
                         />
-                    </div>
-                    <div className="text-[9px] text-muted-foreground text-right">
-                        {usagePercent.toFixed(1)}% used
                     </div>
                 </div>
             </div>
