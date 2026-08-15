@@ -122,11 +122,21 @@ export default function PhotoLightboxModal({
 
     if (!isOpen || !currentPhoto) return null;
 
-    const originalSrc = currentPhoto.original_url.startsWith("http")
-        ? currentPhoto.original_url
-        : `${apiUrl}${currentPhoto.original_url}`;
+    const resolveUrl = (url: string | undefined, fallbackPath: string) => {
+        const target = url || fallbackPath;
+        if (!target) return "";
+        if (target.startsWith("http://") || target.startsWith("https://")) return target;
+        const cleanApiUrl = (apiUrl || "/api").replace(/\/+$/, "");
+        const cleanPath = target.startsWith("/") ? target : `/${target}`;
+        if (cleanPath.startsWith(cleanApiUrl)) {
+            return cleanPath;
+        }
+        return `${cleanApiUrl}${cleanPath}`;
+    };
 
-    const downloadSrc = `${apiUrl}/photos/download/${currentPhoto.id}`;
+    const originalSrc = resolveUrl(currentPhoto.original_url, `/photos/original/${currentPhoto.id}`);
+    const thumbnailSrc = resolveUrl(currentPhoto.thumbnail_url, `/photos/thumbnail/${currentPhoto.id}`);
+    const downloadSrc = resolveUrl("", `/photos/download/${currentPhoto.id}`);
 
     return (
         <div
@@ -208,7 +218,7 @@ export default function PhotoLightboxModal({
             {/* Center Image Container with Zoom & Pan */}
             <div className="relative w-full h-full flex items-center justify-center p-4 sm:p-12">
                 {imageLoading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/70 z-10">
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/70 z-20 pointer-events-none">
                         <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
                         <span className="text-sm font-medium">Loading high-res photo...</span>
                     </div>
@@ -234,13 +244,25 @@ export default function PhotoLightboxModal({
                                     justifyContent: "center",
                                 }}
                             >
+                                {/* Low-res / instant thumbnail preview while high-res streams */}
+                                {thumbnailSrc && imageLoading && (
+                                    /* eslint-disable-next-line @next/next/no-img-element */
+                                    <img
+                                        src={thumbnailSrc}
+                                        alt={currentPhoto.filename}
+                                        className="max-w-full max-h-[85vh] object-contain select-none filter blur-sm opacity-60 rounded-md"
+                                        draggable={false}
+                                    />
+                                )}
+
+                                {/* High-res original photo */}
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
                                     src={originalSrc}
                                     alt={currentPhoto.filename}
                                     onLoad={() => setImageLoading(false)}
                                     className={`max-w-full max-h-[85vh] object-contain select-none transition-opacity duration-300 rounded-md ${
-                                        imageLoading ? "opacity-0" : "opacity-100"
+                                        imageLoading ? "hidden" : "block"
                                     }`}
                                     draggable={false}
                                 />
