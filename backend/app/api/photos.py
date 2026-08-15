@@ -178,6 +178,48 @@ async def run_sync_task(event_id: str):
         files_to_sync = await drive_service.list_files_recursive(folder_id)
         print(f"Found {len(files_to_sync)} files in Drive total")
 
+        active_drive_ids = {f["id"] for f in files_to_sync}
+
+        # 1. Prune photos that were deleted from Google Drive
+        existing_event_photos = await db.fetch_all(
+            "SELECT id, drive_file_id, thumbnail_path, original_file_name FROM photos WHERE event_id = ? AND drive_file_id IS NOT NULL",
+            (event_id, )
+        )
+        pruned_count = 0
+        for ep in existing_event_photos:
+            p_id = ep["id"]
+            if ep["drive_file_id"] not in active_drive_ids:
+                print(f"Pruning photo deleted from Drive: {ep.get('original_file_name')} ({p_id})")
+                await db.execute("DELETE FROM faces WHERE photo_id = ?", (p_id,))
+                thumb = ep.get("thumbnail_path")
+                if thumb and os.path.exists(thumb):
+                    try:
+                        os.remove(thumb)
+                    except Exception:
+                        pass
+                for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+                    old_orig = os.path.join(settings.UPLOAD_ROOT, f"{p_id}.{ext}")
+                    if os.path.exists(old_orig):
+                        try:
+                            os.remove(old_orig)
+                        except Exception:
+                            pass
+                await db.execute("DELETE FROM photos WHERE id = ?", (p_id,))
+                pruned_count += 1
+            else:
+                # Photo is still on Drive: ensure any leftover local original from old syncs is purged
+                for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+                    old_orig = os.path.join(settings.UPLOAD_ROOT, f"{p_id}.{ext}")
+                    if os.path.exists(old_orig):
+                        try:
+                            os.remove(old_orig)
+                        except Exception:
+                            pass
+
+        if pruned_count > 0:
+            print(f"Successfully pruned {pruned_count} deleted photos from event")
+
+        # 2. Identify new and pending photos to index
         new_files = []
         pending_photos = []
         for f in files_to_sync:

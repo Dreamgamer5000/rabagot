@@ -10,6 +10,7 @@ services:
     restart: always
     ports:
       - 8000:8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     hostname: picshare-backend
     mem_limit: 4G
     cpu_count: 2
