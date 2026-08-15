@@ -4,9 +4,11 @@ import uuid
 import json
 import asyncio
 import io
-from typing import List
+import zipfile
+from typing import List, Optional
 from datetime import datetime
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from PIL import Image
 from app.core.config import get_settings
@@ -758,3 +760,50 @@ async def download_photo(photo_id: str):
                                  })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class BulkDownloadRequest(BaseModel):
+    photo_ids: List[str]
+    zip_name: Optional[str] = "photos.zip"
+
+
+@router.post("/download-zip")
+async def download_photos_bulk_zip(req: BulkDownloadRequest):
+    """Streams a ZIP archive containing multiple selected photos in master full resolution"""
+    if not req.photo_ids:
+        raise HTTPException(status_code=400, detail="No photos selected for download")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        placeholders = ",".join(["?"] * len(req.photo_ids))
+        photo_rows = await db.fetch_all(
+            f"SELECT * FROM photos WHERE id IN ({placeholders})", req.photo_ids
+        )
+        for p in photo_rows:
+            local_path = None
+            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+                path = os.path.join(settings.UPLOAD_ROOT, f"{p['id']}.{ext}")
+                if os.path.exists(path):
+                    local_path = path
+                    break
+
+            if local_path:
+                zip_file.write(local_path, p.get("original_file_name", f"{p['id']}.jpg"))
+            elif p.get("drive_file_id"):
+                try:
+                    content, filename = await drive_service.download_file(p["drive_file_id"])
+                    if content:
+                        zip_file.writestr(filename, content)
+                except Exception as e:
+                    print(f"Zip inclusion error for photo {p['id']}: {e}")
+
+    zip_data = zip_buffer.getvalue()
+    clean_filename = req.zip_name if req.zip_name.endswith(".zip") else f"{req.zip_name}.zip"
+    return Response(
+        content=zip_data,
+        media_type="application/x-zip-compressed",
+        headers={
+            "Content-Disposition": f"attachment; filename={clean_filename}",
+            "Content-Length": str(len(zip_data))
+        }
+    )

@@ -16,6 +16,7 @@ import {
     Images,
     Loader2,
     CheckCircle2,
+    Check,
     RefreshCw,
     Download,
     Archive,
@@ -79,6 +80,66 @@ export default function EventGalleryClient() {
     const [matchedPhotos, setMatchedPhotos] = useState<PhotoItem[]>([]);
     const [matchedGuestName, setMatchedGuestName] = useState<string | null>(null);
     const [downloadingZip, setDownloadingZip] = useState(false);
+
+    // Multi-Select Photos & Bulk ZIP Download
+    const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string>>(new Set());
+    const [downloadingSelectedZip, setDownloadingSelectedZip] = useState(false);
+
+    const toggleSelectPhoto = (id: string, e?: React.MouseEvent) => {
+        if (e) e.stopPropagation();
+        setSelectedPhotoIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
+
+    const selectAllCurrentPhotos = () => {
+        const currentList = activeTab === "all" ? photos : matchedPhotos;
+        if (selectedPhotoIds.size === currentList.length) {
+            setSelectedPhotoIds(new Set());
+        } else {
+            setSelectedPhotoIds(new Set(currentList.map((p) => p.id)));
+        }
+    };
+
+    const handleDownloadSelectedZip = async () => {
+        if (selectedPhotoIds.size === 0) return;
+        setDownloadingSelectedZip(true);
+        const count = selectedPhotoIds.size;
+        const toastId = toast.loading(`Packaging ${count} high-res master photo${count !== 1 ? 's' : ''} into ZIP...`);
+        try {
+            const res = await fetch(`${API_URL}/photos/download-zip`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    photo_ids: Array.from(selectedPhotoIds),
+                    zip_name: `${event?.slug || "event"}_selected_${count}_photos.zip`,
+                }),
+            });
+            if (!res.ok) throw new Error("Failed to generate ZIP");
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `${event?.slug || "event"}_selected_${count}_photos.zip`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+            toast.success(`Downloaded ${count} photos in ZIP!`, { id: toastId });
+            setSelectedPhotoIds(new Set());
+        } catch (err) {
+            console.error("Bulk download error:", err);
+            toast.error("Failed to download selected photos", { id: toastId });
+        } finally {
+            setDownloadingSelectedZip(false);
+        }
+    };
 
     const webcamRef = useRef<Webcam>(null);
 
@@ -572,8 +633,26 @@ export default function EventGalleryClient() {
                                     <div
                                         key={photo.id}
                                         onClick={() => setLightboxIndex(index)}
-                                        className="group relative aspect-square bg-muted/40 rounded-xl overflow-hidden cursor-pointer border border-border/40 hover:border-indigo-500/50 transition-all duration-300 shadow-xs hover:shadow-lg hover:-translate-y-0.5"
+                                        className={`group relative aspect-square bg-muted/40 rounded-xl overflow-hidden cursor-pointer border transition-all duration-300 shadow-xs hover:shadow-lg hover:-translate-y-0.5 ${
+                                            selectedPhotoIds.has(photo.id)
+                                                ? "border-indigo-500 ring-2 ring-indigo-500/80 shadow-indigo-500/10"
+                                                : "border-border/40 hover:border-indigo-500/50"
+                                        }`}
                                     >
+                                        {/* Top-Left Selection Checkbox */}
+                                        <button
+                                            type="button"
+                                            onClick={(e) => toggleSelectPhoto(photo.id, e)}
+                                            className={`absolute top-2 left-2 z-20 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 shadow-md ${
+                                                selectedPhotoIds.has(photo.id)
+                                                    ? "bg-indigo-600 text-white ring-2 ring-white/90 scale-100 opacity-100"
+                                                    : "bg-black/50 text-transparent border border-white/50 hover:bg-black/80 hover:border-white opacity-0 group-hover:opacity-100 hover:scale-105"
+                                            }`}
+                                            title={selectedPhotoIds.has(photo.id) ? "Deselect Photo" : "Select Photo"}
+                                        >
+                                            <Check className={`w-4 h-4 stroke-[3] ${selectedPhotoIds.has(photo.id) ? "text-white" : "opacity-0"}`} />
+                                        </button>
+
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
                                             src={
@@ -648,8 +727,26 @@ export default function EventGalleryClient() {
                                     <div
                                         key={photo.id}
                                         onClick={() => setLightboxIndex(index)}
-                                        className="group relative aspect-square bg-muted/40 rounded-xl overflow-hidden cursor-pointer border border-border/40 hover:border-indigo-500/50 transition-all duration-300 shadow-xs hover:shadow-lg hover:-translate-y-0.5"
+                                        className={`group relative aspect-square bg-muted/40 rounded-xl overflow-hidden cursor-pointer border transition-all duration-300 shadow-xs hover:shadow-lg hover:-translate-y-0.5 ${
+                                            selectedPhotoIds.has(photo.id)
+                                                ? "border-indigo-500 ring-2 ring-indigo-500/80 shadow-indigo-500/10"
+                                                : "border-border/40 hover:border-indigo-500/50"
+                                        }`}
                                     >
+                                        {/* Top-Left Selection Checkbox */}
+                                        <button
+                                            type="button"
+                                            onClick={(e) => toggleSelectPhoto(photo.id, e)}
+                                            className={`absolute top-2 left-2 z-20 w-7 h-7 rounded-lg flex items-center justify-center transition-all duration-200 shadow-md ${
+                                                selectedPhotoIds.has(photo.id)
+                                                    ? "bg-indigo-600 text-white ring-2 ring-white/90 scale-100 opacity-100"
+                                                    : "bg-black/50 text-transparent border border-white/50 hover:bg-black/80 hover:border-white opacity-0 group-hover:opacity-100 hover:scale-105"
+                                            }`}
+                                            title={selectedPhotoIds.has(photo.id) ? "Deselect Photo" : "Select Photo"}
+                                        >
+                                            <Check className={`w-4 h-4 stroke-[3] ${selectedPhotoIds.has(photo.id) ? "text-white" : "opacity-0"}`} />
+                                        </button>
+
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
                                         <img
                                             src={
@@ -674,6 +771,52 @@ export default function EventGalleryClient() {
                     </div>
                 )}
             </main>
+
+            {/* Floating Bulk Selection Action Dock */}
+            {selectedPhotoIds.size > 0 && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-neutral-900/95 text-white backdrop-blur-xl border border-white/15 px-4 py-2.5 rounded-full shadow-2xl animate-in slide-in-from-bottom-5">
+                    <div className="flex items-center gap-2 pl-1">
+                        <span className="text-xs font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 px-2.5 py-0.5 rounded-full">
+                            {selectedPhotoIds.size} selected
+                        </span>
+                    </div>
+
+                    <div className="h-4 w-px bg-white/20" />
+
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={selectAllCurrentPhotos}
+                        className="h-8 text-xs text-neutral-300 hover:text-white hover:bg-white/10 rounded-full"
+                    >
+                        {selectedPhotoIds.size === (activeTab === "all" ? photos.length : matchedPhotos.length) ? "Deselect All" : "Select All"}
+                    </Button>
+
+                    <Button
+                        size="sm"
+                        onClick={handleDownloadSelectedZip}
+                        disabled={downloadingSelectedZip}
+                        className="h-8 px-4 text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full shadow-lg gap-1.5"
+                    >
+                        {downloadingSelectedZip ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                            <Download className="w-3.5 h-3.5" />
+                        )}
+                        <span>Download ZIP ({selectedPhotoIds.size})</span>
+                    </Button>
+
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setSelectedPhotoIds(new Set())}
+                        className="h-7 w-7 text-neutral-400 hover:text-white hover:bg-white/10 rounded-full"
+                        title="Clear selection"
+                    >
+                        <X className="w-4 h-4" />
+                    </Button>
+                </div>
+            )}
 
             {/* AI Selfie Search Modal */}
             {isSearchModalOpen && (
