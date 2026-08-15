@@ -171,7 +171,7 @@ const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }
 const StorageDisplay = ({ eventId, apiUrl }: { eventId: string, apiUrl: string }) => {
     const [storage, setStorage] = useState<StorageInfo | null>(null);
     const [loading, setLoading] = useState(true);
-    const [isExpanded, setIsExpanded] = useState(true);
+    const [isExpanded, setIsExpanded] = useState(false);
 
     useEffect(() => {
         const fetchStorage = async () => {
