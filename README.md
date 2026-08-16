@@ -187,7 +187,7 @@ bun run dev
 ## 🙏 Credits & Acknowledgments
 
 - **Original Creator**: [Yash Oswal](https://github.com/yashoswalyo) — Creator of the original PICSHARE project.
-- **Naming**: Special thanks to [DanNoby](https://github.com/DanNoby/) and protein muesli (seriously) for naming the project **rabogat**.
+- **Naming**: Special thanks to [DanNoby](https://github.com/DanNoby/) and protein muesli (seriously) for naming the project **rabagot**.
 - **AI Models**: Powered by the [InsightFace](https://github.com/deepinsight/insightface) library (`buffalo_l`).
 - **Icons & UI**: [Lucide Icons](https://lucide.dev/) and [Radix UI](https://www.radix-ui.com/).
 
@@ -197,4 +197,4 @@ bun run dev
 
 - **License**: Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 
-**Built with ❤️ for [Event Photographers & Guests](https://github.com/Dreamgamer5000/rabogat)**
+**Built with ❤️ for [Event Photographers & Guests](https://github.com/Dreamgamer5000/rabagot)**
