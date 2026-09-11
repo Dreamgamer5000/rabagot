@@ -1,0 +1,35 @@
+services:
+  backend:
+    image: ${GCP_REGION:-us-west1}-docker.pkg.dev/${GCP_PROJECT_ID:-your-gcp-project-id}/${GCP_REPO_NAME:-picshare-repo}/picshare-backend:${IMAGE_TAG:-latest}
+    init: true
+    container_name: picshare-backend
+    restart: always
+    volumes:
+      - ./data:/app/data:z
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - web_net
+
+  frontend:
+    image: ${GCP_REGION:-us-west1}-docker.pkg.dev/${GCP_PROJECT_ID:-your-gcp-project-id}/${GCP_REPO_NAME:-picshare-repo}/picshare-frontend:${IMAGE_TAG:-latest}
+    init: true
+    container_name: picshare-frontend
+    restart: always
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=/api
+      - BACKEND_HOSTNAME=picshare-backend:8000
+    networks:
+      - web_net
+
+networks:
+  web_net:
+    external: true

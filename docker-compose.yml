@@ -1,16 +1,16 @@
 services:
   backend:
     build: ./backend
+    init: true
     container_name: picshare-backend
     volumes:
       - ./data:/app/data:z
-      - ./backend/app:/app/app:z
     env_file:
-      - ./backend/.env
+      - .env
     restart: always
     ports:
       - 8000:8000
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     hostname: picshare-backend
     mem_limit: 4G
     cpu_count: 2
@@ -21,6 +21,7 @@ services:
       args:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
         - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-picshare-backend:8000}
+    init: true
     container_name: picshare-frontend
     ports:
       - "3005:3000"
