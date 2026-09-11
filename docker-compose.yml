@@ -12,8 +12,8 @@ services:
       - 8000:8000
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     hostname: picshare-backend
-    mem_limit: 4G
-    cpu_count: 2
+    mem_limit: ${BACKEND_MEM_LIMIT:-16G}
+    cpu_count: ${BACKEND_CPU_COUNT:-12}
 
   frontend:
     build:

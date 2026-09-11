@@ -4,16 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import events, photos, guests, auth
 from app.services.db import connect_to_db, close_db_connection
+from app.services.recovery import run_recovery_tasks
 from app.core.config import get_settings
 from subprocess import Popen
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_to_db()
-    
-    # NOTE: Recovery tasks and cron jobs are now run in a separate process 
-    # via cron_worker.py to avoid duplication when running multiple workers.
-    
+    await run_recovery_tasks()
     yield
     await close_db_connection()
 
