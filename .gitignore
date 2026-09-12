@@ -61,3 +61,6 @@ backend/thumbnails/*
 
 # Docker
 .dockerignore
+
+# Agents
+.agents/
