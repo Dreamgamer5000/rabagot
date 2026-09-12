@@ -120,6 +120,8 @@ async def list_events():
     rows = await db.fetch_all("SELECT * FROM events ORDER BY created_at DESC")
     return [format_event(row) for row in rows]
 
+ALLOWED_UPDATE_FIELDS = {"name", "slug", "date", "drive_folder_url", "secret_code"}
+
 @router.put("/{event_id}", response_model=EventResponse)
 async def update_event(event_id: str, event_data: dict):
     # event_data comes as a dict from frontend
@@ -134,15 +136,25 @@ async def update_event(event_id: str, event_data: dict):
     fields = []
     params = []
     for key, value in event_data.items():
-        # Map frontend _id back to id if necessary, but usually we don't update ID
-        if key == "_id": continue 
+        if key not in ALLOWED_UPDATE_FIELDS:
+            continue
         
+        # Normalize secret_code: empty string or whitespace becomes None (SQL NULL)
+        if key == "secret_code":
+            if isinstance(value, str):
+                value = value.strip() or None
+            elif not value:
+                value = None
+
         fields.append(f"{key} = ?")
         if isinstance(value, datetime):
             params.append(value.isoformat())
         else:
             params.append(value)
     
+    if not fields:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
     params.append(event_id)
     query = f"UPDATE events SET {', '.join(fields)} WHERE id = ?"
     

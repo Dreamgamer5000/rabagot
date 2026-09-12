@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown } from "lucide-react";
+import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Lock, Unlock, Eye, EyeOff, Sparkles } from "lucide-react";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -328,6 +328,14 @@ export default function AdminDashboardClient() {
     const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
     const [deletingPhotos, setDeletingPhotos] = useState(false);
     const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+    const [editingSecretEvent, setEditingSecretEvent] = useState<Event | null>(null);
+    const [editSecretCode, setEditSecretCode] = useState("");
+    const [showSecretPassword, setShowSecretPassword] = useState(false);
+    const [savingSecret, setSavingSecret] = useState(false);
+    const [galleryPage, setGalleryPage] = useState(1);
+    const [galleryTotal, setGalleryTotal] = useState(0);
+    const [galleryTotalPages, setGalleryTotalPages] = useState(1);
+    const galleryContainerRef = useRef<HTMLDivElement>(null);
 
 
     const router = useRouter();
@@ -471,6 +479,82 @@ export default function AdminDashboardClient() {
         router.push("/admin/login");
     };
 
+    const handleOpenEditSecret = (event: Event) => {
+        setEditingSecretEvent(event);
+        setEditSecretCode(event.secret_code || "");
+        setShowSecretPassword(false);
+    };
+
+    const handleGeneratePin = () => {
+        const pin = Math.floor(100000 + Math.random() * 900000).toString();
+        setEditSecretCode(pin);
+        setShowSecretPassword(true);
+    };
+
+    const handleSaveSecret = async (e?: React.FormEvent) => {
+        if (e) e.preventDefault();
+        if (!editingSecretEvent) return;
+
+        setSavingSecret(true);
+        const token = Cookies.get("admin_token");
+        const cleanCode = editSecretCode.trim() || null;
+
+        try {
+            const response = await fetch(`${API_URL}/events/${editingSecretEvent._id}`, {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({ secret_code: cleanCode })
+            });
+
+            if (response.ok) {
+                toast.success(cleanCode ? "Event passcode updated successfully!" : "Event passcode removed (event is now public)");
+                setEditingSecretEvent(null);
+                fetchEvents();
+            } else {
+                toast.error("Failed to update event passcode");
+            }
+        } catch (error) {
+            console.error("Error updating secret code:", error);
+            toast.error("Network error");
+        } finally {
+            setSavingSecret(false);
+        }
+    };
+
+    const handleRemoveSecret = async () => {
+        if (!editingSecretEvent) return;
+        setEditSecretCode("");
+        setSavingSecret(true);
+        const token = Cookies.get("admin_token");
+
+        try {
+            const response = await fetch(`${API_URL}/events/${editingSecretEvent._id}`, {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({ secret_code: null })
+            });
+
+            if (response.ok) {
+                toast.success("Event passcode removed (event is now public)");
+                setEditingSecretEvent(null);
+                fetchEvents();
+            } else {
+                toast.error("Failed to remove passcode");
+            }
+        } catch (error) {
+            console.error("Error removing secret code:", error);
+            toast.error("Network error");
+        } finally {
+            setSavingSecret(false);
+        }
+    };
+
     const handleShowGuests = async (event: Event) => {
         setSelectedEventForGuests(event);
         setShowGuestsModal(true);
@@ -550,21 +634,25 @@ export default function AdminDashboardClient() {
         }
     };
 
-    const handleShowGallery = async (event: Event) => {
+    const handleShowGallery = async (event: Event, page: number = 1) => {
         setSelectedEventForGallery(event);
         setShowGalleryModal(true);
         setLoadingPhotos(true);
         setSelectedPhotos(new Set());
+        setGalleryPage(page);
 
         try {
             const token = Cookies.get("admin_token");
-            const response = await fetch(`${API_URL}/photos/event/${event._id}/gallery?limit=1000`, {
+            const response = await fetch(`${API_URL}/photos/event/${event._id}/gallery?page=${page}&limit=500`, {
                 headers: { "Authorization": `Bearer ${token}` }
             });
 
             if (response.ok) {
                 const data = await response.json();
                 setPhotos(data.photos || []);
+                setGalleryTotal(data.total || 0);
+                setGalleryTotalPages(data.total_pages || 1);
+                galleryContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
             } else {
                 toast.error("Failed to load photos");
             }
@@ -623,9 +711,9 @@ export default function AdminDashboardClient() {
             if (response.ok) {
                 const data = await response.json();
                 toast.success(data.message);
-                // Refresh the gallery
+                // Refresh the gallery on current page
                 if (selectedEventForGallery) {
-                    handleShowGallery(selectedEventForGallery);
+                    handleShowGallery(selectedEventForGallery, galleryPage);
                 }
             } else {
                 toast.error("Failed to delete photos");
@@ -803,6 +891,35 @@ export default function AdminDashboardClient() {
                                     />
                                 </div>
 
+                                <div className="flex items-center justify-between p-2.5 bg-muted/40 rounded-xl text-xs">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        {event.secret_code ? (
+                                            <>
+                                                <Lock className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                                                <span className="font-medium text-foreground text-[11px]">Passcode:</span>
+                                                <code className="px-1.5 py-0.5 bg-background rounded font-mono font-bold text-xs text-indigo-600 dark:text-indigo-400 border border-border truncate max-w-[110px]">
+                                                    {event.secret_code}
+                                                </code>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Unlock className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                                                <span className="text-muted-foreground font-medium text-[11px]">Public Access</span>
+                                            </>
+                                        )}
+                                    </div>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => handleOpenEditSecret(event)}
+                                        className="h-7 px-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 flex-shrink-0"
+                                        title="Edit Secret Passcode"
+                                    >
+                                        <KeyRound className="w-3 h-3 mr-1" />
+                                        {event.secret_code ? "Edit" : "Set Passcode"}
+                                    </Button>
+                                </div>
+
                                 {event.drive_folder_url && (
                                     <div className="p-3 bg-muted/40 rounded-xl space-y-2">
                                         <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Connected Folder</p>
@@ -818,12 +935,6 @@ export default function AdminDashboardClient() {
                                             <span>Last indexed:</span>
                                             <span className="font-bold">{event.last_sync_at ? new Date(event.last_sync_at).toLocaleTimeString() : 'Never'}</span>
                                         </div>
-                                        {event.secret_code && (
-                                            <div className="flex items-center justify-between text-[10px] text-indigo-600 font-bold border-t border-indigo-100 dark:border-indigo-900/30 pt-1 mt-1">
-                                                <span>Secret Code:</span>
-                                                <span>{event.secret_code}</span>
-                                            </div>
-                                        )}
                                     </div>
                                 )}
 
@@ -843,6 +954,15 @@ export default function AdminDashboardClient() {
                                                 Sync Now
                                             </>
                                         )}
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-9 w-9 p-0 border border-border bg-card hover:bg-amber-50 dark:hover:bg-amber-900/20 text-foreground"
+                                        onClick={() => handleOpenEditSecret(event)}
+                                        title="Edit Secret Passcode"
+                                    >
+                                        <KeyRound className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                                     </Button>
                                     <Button
                                         variant="ghost"
@@ -1061,8 +1181,9 @@ export default function AdminDashboardClient() {
                                     Photo Gallery
                                 </h3>
                                 <p className="text-sm text-muted-foreground mt-1">
-                                    {selectedEventForGallery?.name} - {photos.length} photo{photos.length !== 1 ? 's' : ''}
-                                    {selectedPhotos.size > 0 && ` (${selectedPhotos.size} selected)`}
+                                    {selectedEventForGallery?.name} • {galleryTotal.toLocaleString()} total photo{galleryTotal !== 1 ? 's' : ''}
+                                    {galleryTotalPages > 1 && ` (Page ${galleryPage} of ${galleryTotalPages})`}
+                                    {selectedPhotos.size > 0 && ` • ${selectedPhotos.size} selected on this page`}
                                 </p>
                             </div>
                             <Button
@@ -1086,7 +1207,7 @@ export default function AdminDashboardClient() {
                                             onChange={toggleSelectAll}
                                             className="w-4 h-4 rounded border-border"
                                         />
-                                        <span className="text-sm font-medium">Select All</span>
+                                        <span className="text-sm font-medium">Select All on Page</span>
                                     </label>
                                     {selectedPhotos.size > 0 && (
                                         <span className="text-sm text-muted-foreground">
@@ -1113,7 +1234,7 @@ export default function AdminDashboardClient() {
                             </div>
                         )}
 
-                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+                        <div ref={galleryContainerRef} className="p-6 overflow-y-auto max-h-[calc(90vh-230px)]">
                             {loadingPhotos ? (
                                 <div className="flex items-center justify-center py-12">
                                     <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
@@ -1197,6 +1318,231 @@ export default function AdminDashboardClient() {
                                 </div>
                             )}
                         </div>
+
+                        {/* Pagination Footer */}
+                        {!loadingPhotos && galleryTotalPages > 1 && (
+                            <div className="px-6 py-3 border-t border-border bg-muted/20 flex flex-wrap items-center justify-between gap-3">
+                                <div className="text-xs text-muted-foreground font-medium">
+                                    Showing{" "}
+                                    <span className="font-semibold text-foreground">
+                                        {((galleryPage - 1) * 500 + 1).toLocaleString()}
+                                    </span>
+                                    –
+                                    <span className="font-semibold text-foreground">
+                                        {Math.min(galleryPage * 500, galleryTotal).toLocaleString()}
+                                    </span>{" "}
+                                    of{" "}
+                                    <span className="font-semibold text-foreground">
+                                        {galleryTotal.toLocaleString()}
+                                    </span>{" "}
+                                    photos
+                                </div>
+
+                                <div className="flex items-center gap-1.5">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={galleryPage <= 1 || loadingPhotos}
+                                        onClick={() => selectedEventForGallery && handleShowGallery(selectedEventForGallery, galleryPage - 1)}
+                                        className="h-8 px-2.5 text-xs gap-1 border-border bg-card hover:bg-muted text-foreground"
+                                    >
+                                        <ChevronLeft className="w-3.5 h-3.5" />
+                                        Previous
+                                    </Button>
+
+                                    <div className="flex items-center gap-1 px-1">
+                                        {Array.from({ length: galleryTotalPages }, (_, i) => i + 1)
+                                            .filter(p => p === 1 || p === galleryTotalPages || Math.abs(p - galleryPage) <= 1)
+                                            .reduce<(number | string)[]>((acc, p, idx, arr) => {
+                                                if (idx > 0 && p - (arr[idx - 1] as number) > 1) {
+                                                    acc.push("...");
+                                                }
+                                                acc.push(p);
+                                                return acc;
+                                            }, [])
+                                            .map((item, idx) =>
+                                                item === "..." ? (
+                                                    <span key={`dots-${idx}`} className="px-1 text-xs text-muted-foreground">
+                                                        ...
+                                                    </span>
+                                                ) : (
+                                                    <Button
+                                                        key={`page-${item}`}
+                                                        variant={galleryPage === item ? "default" : "outline"}
+                                                        size="sm"
+                                                        disabled={loadingPhotos}
+                                                        onClick={() => selectedEventForGallery && handleShowGallery(selectedEventForGallery, item as number)}
+                                                        className={`h-8 min-w-8 px-2 text-xs font-semibold ${
+                                                            galleryPage === item
+                                                                ? "bg-purple-600 hover:bg-purple-700 text-white shadow-sm"
+                                                                : "border-border bg-card hover:bg-muted text-foreground"
+                                                        }`}
+                                                    >
+                                                        {item}
+                                                    </Button>
+                                                )
+                                            )}
+                                    </div>
+
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={galleryPage >= galleryTotalPages || loadingPhotos}
+                                        onClick={() => selectedEventForGallery && handleShowGallery(selectedEventForGallery, galleryPage + 1)}
+                                        className="h-8 px-2.5 text-xs gap-1 border-border bg-card hover:bg-muted text-foreground"
+                                    >
+                                        Next
+                                        <ChevronRight className="w-3.5 h-3.5" />
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Edit Secret Passcode Modal */}
+            {editingSecretEvent && (
+                <div
+                    className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                    onClick={() => setEditingSecretEvent(null)}
+                >
+                    <div
+                        className="bg-card border border-border rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in fade-in-50 zoom-in-95 duration-200"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="p-6 border-b border-border flex items-center justify-between bg-gradient-to-r from-amber-50 to-indigo-50 dark:from-amber-950/30 dark:to-indigo-950/30">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl border border-amber-500/20">
+                                    <KeyRound className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-bold text-foreground">
+                                        Event Passcode & Access
+                                    </h3>
+                                    <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[240px]">
+                                        {editingSecretEvent.name}
+                                    </p>
+                                </div>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setEditingSecretEvent(null)}
+                                className="h-8 w-8 p-0 rounded-full hover:bg-muted"
+                            >
+                                <X className="w-4 h-4" />
+                            </Button>
+                        </div>
+
+                        <form onSubmit={handleSaveSecret} className="p-6 space-y-5">
+                            {/* Current status display */}
+                            <div className="flex items-center justify-between p-3 rounded-xl bg-muted/40 border border-border text-xs">
+                                <div className="flex items-center gap-2.5">
+                                    {editingSecretEvent.secret_code ? (
+                                        <>
+                                            <Lock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                            <div>
+                                                <span className="font-semibold text-foreground">Protected Event</span>
+                                                <p className="text-[11px] text-muted-foreground">Current code: <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{editingSecretEvent.secret_code}</span></p>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Unlock className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                                            <div>
+                                                <span className="font-semibold text-foreground">Public Event</span>
+                                                <p className="text-[11px] text-muted-foreground">Open to anyone without a passcode</p>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Input field */}
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <Label htmlFor="edit_secret_code" className="text-xs font-semibold">
+                                        Passcode / PIN
+                                    </Label>
+                                    <button
+                                        type="button"
+                                        onClick={handleGeneratePin}
+                                        className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                                    >
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                        Generate 6-digit PIN
+                                    </button>
+                                </div>
+                                <div className="relative">
+                                    <Input
+                                        id="edit_secret_code"
+                                        type={showSecretPassword ? "text" : "password"}
+                                        value={editSecretCode}
+                                        onChange={(e) => setEditSecretCode(e.target.value)}
+                                        placeholder="Leave empty for public access"
+                                        className="pr-10 bg-background border-border font-mono tracking-wider"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowSecretPassword(!showSecretPassword)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                                        title={showSecretPassword ? "Hide passcode" : "Show passcode"}
+                                    >
+                                        {showSecretPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground">
+                                    Guests will be required to enter this passcode before they can view the event gallery or upload selfies.
+                                </p>
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="flex items-center justify-between pt-3 border-t border-border gap-2">
+                                {editingSecretEvent.secret_code ? (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={savingSecret}
+                                        onClick={handleRemoveSecret}
+                                        className="text-xs border-red-200 dark:border-red-900 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50"
+                                    >
+                                        Make Public
+                                    </Button>
+                                ) : (
+                                    <div />
+                                )}
+
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        disabled={savingSecret}
+                                        onClick={() => setEditingSecretEvent(null)}
+                                        className="text-xs"
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        type="submit"
+                                        size="sm"
+                                        disabled={savingSecret}
+                                        className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-100 dark:shadow-none"
+                                    >
+                                        {savingSecret ? (
+                                            <>
+                                                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                                                Saving...
+                                            </>
+                                        ) : (
+                                            "Save Passcode"
+                                        )}
+                                    </Button>
+                                </div>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}

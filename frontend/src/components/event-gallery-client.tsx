@@ -85,6 +85,41 @@ export default function EventGalleryClient() {
     const [selectedPhotoIds, setSelectedPhotoIds] = useState<Set<string>>(new Set());
     const [downloadingSelectedZip, setDownloadingSelectedZip] = useState(false);
 
+    // Smart Scroll-Up Sticky Header State
+    const [isHeaderVisible, setIsHeaderVisible] = useState(true);
+
+    // Auto-hide header on scroll down, instantly reveal on scroll up
+    useEffect(() => {
+        let prevScrollY = window.scrollY;
+        let ticking = false;
+
+        const handleScroll = () => {
+            if (!ticking) {
+                window.requestAnimationFrame(() => {
+                    const currentScrollY = window.scrollY;
+
+                    // Always keep header visible when near the top of the page
+                    if (currentScrollY < 60) {
+                        setIsHeaderVisible(true);
+                    } else if (currentScrollY > prevScrollY && currentScrollY - prevScrollY > 8) {
+                        // Scrolling DOWN -> Hide header to maximize photo viewing area
+                        setIsHeaderVisible(false);
+                    } else if (currentScrollY < prevScrollY && prevScrollY - currentScrollY > 6) {
+                        // Scrolling UP -> Immediately slide header down into view
+                        setIsHeaderVisible(true);
+                    }
+
+                    prevScrollY = currentScrollY;
+                    ticking = false;
+                });
+                ticking = true;
+            }
+        };
+
+        window.addEventListener("scroll", handleScroll, { passive: true });
+        return () => window.removeEventListener("scroll", handleScroll);
+    }, []);
+
     const toggleSelectPhoto = (id: string, e?: React.MouseEvent) => {
         if (e) e.stopPropagation();
         setSelectedPhotoIds((prev) => {
@@ -510,8 +545,12 @@ export default function EventGalleryClient() {
 
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col">
-            {/* Top Navigation & Sticky Header */}
-            <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/80 backdrop-blur-xl transition-all">
+            {/* Top Navigation & Smart Scroll-Up Sticky Header (offset below 64px global navbar) */}
+            <header
+                className={`sticky top-16 z-40 w-full border-b border-border/60 bg-background/90 backdrop-blur-xl transition-transform duration-300 ease-in-out shadow-xs ${
+                    isHeaderVisible ? "translate-y-0" : "-translate-y-[calc(100%+4.5rem)]"
+                }`}
+            >
                 <div className="container mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                     {/* Left: Back button & Event Name */}
                     <div className="flex items-center gap-3 min-w-0">

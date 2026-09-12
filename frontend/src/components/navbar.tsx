@@ -26,7 +26,7 @@ export function Navbar() {
 
     if (!mounted) {
         return (
-            <nav className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <nav className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/90 backdrop-blur-xl">
                 <div className="container flex h-16 items-center justify-between px-4 max-w-6xl mx-auto">
                     <div className="flex gap-6 md:gap-10">
                         <span className="font-bold text-xl tracking-tight">PICSHARE<span className="text-indigo-600">.</span></span>
@@ -41,7 +41,7 @@ export function Navbar() {
     }
 
     return (
-        <nav className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-colors">
+        <nav className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/90 backdrop-blur-xl transition-colors">
             <div className="container flex h-16 items-center justify-between px-4 max-w-6xl mx-auto">
                 <div className="flex gap-6 md:gap-10">
                     <Link href="/" className="flex items-center space-x-2 group">
