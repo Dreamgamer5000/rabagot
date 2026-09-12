@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -12,12 +12,18 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+};
+
 export const metadata: Metadata = {
   title: {
-    template: "%s | PICSHARE",
-    default: "PICSHARE | AI-Powered Event Photography",
+    template: "%s | Wedding Album",
+    default: "Cerin & Chris | Wedding Album",
   },
-  description: "Find every photo of yourself instantly with AI-powered face matching.",
+  description: "Find and download your photos from Cerin & Chris's wedding celebrations with AI-powered face matching.",
 };
 
 import { Toaster } from "@/components/ui/sonner";
