@@ -88,12 +88,14 @@ class DriveService:
         if not service: return None, None
         
         # Get metadata to get the filename
-        file_metadata = await asyncio.to_thread(service.files().get(fileId=file_id, fields='name').execute)
+        file_metadata = await asyncio.to_thread(
+            service.files().get(fileId=file_id, fields='name', supportsAllDrives=True).execute
+        )
         filename = file_metadata.get('name', 'photo.jpg')
         
         # Download the actual file content
         from googleapiclient.http import MediaIoBaseDownload
-        request = service.files().get_media(fileId=file_id)
+        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
         done = False

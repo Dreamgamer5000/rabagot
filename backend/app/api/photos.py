@@ -740,26 +740,67 @@ async def get_thumbnail(photo_id: str):
 
 @router.get("/download/{photo_id}")
 async def download_photo(photo_id: str):
-    row = await db.fetch_one("SELECT drive_file_id FROM photos WHERE id = ?",
-                             (photo_id, ))
-    if not row or not row["drive_file_id"]:
+    row = await db.fetch_one("SELECT * FROM photos WHERE id = ?", (photo_id,))
+    if not row:
         raise HTTPException(status_code=404, detail="Photo not found")
 
-    try:
-        content, filename = await drive_service.download_file(
-            row["drive_file_id"])
-        if content is None:
-            raise HTTPException(status_code=500,
-                                detail="Failed to download from Drive")
+    raw_name = row.get("original_file_name") or f"{photo_id}.jpg"
+    base_name, _ = os.path.splitext(raw_name)
+    jpeg_filename = f"{base_name}.jpg"
 
-        return StreamingResponse(io.BytesIO(content),
-                                 media_type="application/octet-stream",
-                                 headers={
-                                     "Content-Disposition":
-                                     f"attachment; filename={filename}"
-                                 })
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # 1. Check local master original file in UPLOAD_ROOT
+    for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+        local_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+        if os.path.exists(local_path):
+            return FileResponse(
+                local_path,
+                filename=raw_name,
+                content_disposition_type="attachment"
+            )
+
+    # 2. Check 2K local preview and convert to universal JPEG on the fly (~8ms)
+    preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
+    if os.path.exists(preview_path):
+        try:
+            with Image.open(preview_path) as img:
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=90, optimize=True)
+                jpeg_bytes = buf.getvalue()
+            return Response(
+                content=jpeg_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{jpeg_filename}"',
+                    "Content-Length": str(len(jpeg_bytes))
+                }
+            )
+        except Exception as e:
+            print(f"Error converting preview to JPEG for {photo_id}: {e}")
+
+    # 3. Fallback to Google Drive if Drive ID exists
+    drive_file_id = row.get("drive_file_id")
+    if drive_file_id:
+        try:
+            content, filename = await drive_service.download_file(drive_file_id)
+            if content:
+                ext = filename.split(".")[-1] if "." in filename else "jpg"
+                cache_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+                with open(cache_path, "wb") as f:
+                    f.write(content)
+                return Response(
+                    content=content,
+                    media_type="application/octet-stream",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{filename}"',
+                        "Content-Length": str(len(content))
+                    }
+                )
+        except Exception as e:
+            print(f"Drive download error for {photo_id}: {e}")
+
+    raise HTTPException(status_code=404, detail="Photo file not found")
 
 
 class BulkDownloadRequest(BaseModel):
@@ -769,7 +810,7 @@ class BulkDownloadRequest(BaseModel):
 
 @router.post("/download-zip")
 async def download_photos_bulk_zip(req: BulkDownloadRequest):
-    """Streams a ZIP archive containing multiple selected photos in master full resolution"""
+    """Streams a ZIP archive containing selected photos in high-resolution universal JPEG"""
     if not req.photo_ids:
         raise HTTPException(status_code=400, detail="No photos selected for download")
 
@@ -780,22 +821,45 @@ async def download_photos_bulk_zip(req: BulkDownloadRequest):
             f"SELECT * FROM photos WHERE id IN ({placeholders})", req.photo_ids
         )
         for p in photo_rows:
+            p_id = p["id"]
+            raw_name = p.get("original_file_name") or f"{p_id}.jpg"
+            base_name, _ = os.path.splitext(raw_name)
+            jpeg_filename = f"{base_name}.jpg"
+
+            # 1. Check local original
             local_path = None
-            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
-                path = os.path.join(settings.UPLOAD_ROOT, f"{p['id']}.{ext}")
+            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG']:
+                path = os.path.join(settings.UPLOAD_ROOT, f"{p_id}.{ext}")
                 if os.path.exists(path):
                     local_path = path
                     break
 
             if local_path:
-                zip_file.write(local_path, p.get("original_file_name", f"{p['id']}.jpg"))
-            elif p.get("drive_file_id"):
+                zip_file.write(local_path, raw_name)
+                continue
+
+            # 2. Check 2K local preview -> convert to universal JPEG
+            preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{p_id}.webp")
+            if os.path.exists(preview_path):
+                try:
+                    with Image.open(preview_path) as img:
+                        if img.mode != "RGB":
+                            img = img.convert("RGB")
+                        buf = io.BytesIO()
+                        img.save(buf, format="JPEG", quality=88)
+                        zip_file.writestr(jpeg_filename, buf.getvalue())
+                    continue
+                except Exception as e:
+                    print(f"Zip preview convert error for {p_id}: {e}")
+
+            # 3. Fallback to Google Drive if needed
+            if p.get("drive_file_id"):
                 try:
                     content, filename = await drive_service.download_file(p["drive_file_id"])
                     if content:
                         zip_file.writestr(filename, content)
                 except Exception as e:
-                    print(f"Zip inclusion error for photo {p['id']}: {e}")
+                    print(f"Zip inclusion error for photo {p_id}: {e}")
 
     zip_data = zip_buffer.getvalue()
     clean_filename = req.zip_name if req.zip_name.endswith(".zip") else f"{req.zip_name}.zip"

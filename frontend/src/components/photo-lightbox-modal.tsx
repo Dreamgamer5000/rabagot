@@ -5,6 +5,7 @@ import { X, ChevronLeft, ChevronRight, Download, ZoomIn, ZoomOut, RotateCcw, Loa
 import { Button } from "@/components/ui/button";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { trackEvent } from "@/lib/analytics";
+import { toast } from "sonner";
 
 export interface LightboxPhoto {
     id: string;
@@ -175,6 +176,9 @@ export default function PhotoLightboxModal({
                             href={downloadSrc}
                             download={currentPhoto.filename}
                             onClick={() => {
+                                toast.success("Downloading photo...", {
+                                    description: currentPhoto.filename || "Your photo will save shortly.",
+                                });
                                 trackEvent("single_photo_downloaded", {
                                     photo_id: currentPhoto.id,
                                     filename: currentPhoto.filename,

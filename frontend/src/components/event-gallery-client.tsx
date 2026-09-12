@@ -151,7 +151,13 @@ export default function EventGalleryClient() {
         if (selectedPhotoIds.size === 0) return;
         setDownloadingSelectedZip(true);
         const count = selectedPhotoIds.size;
-        const toastId = toast.loading(`Packaging ${count} high-res master photo${count !== 1 ? 's' : ''} into ZIP...`);
+        const toastId = toast.loading(
+            `Packaging ${count} selected photo${count !== 1 ? 's' : ''} into ZIP...`,
+            {
+                description: "Generating your archive on the server. Your download will begin shortly!",
+                duration: 60000,
+            }
+        );
         try {
             const res = await fetch(`${API_URL}/photos/download-zip`, {
                 method: "POST",
@@ -171,7 +177,8 @@ export default function EventGalleryClient() {
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
-            toast.success(`Downloaded ${count} photos in ZIP!`, { id: toastId });
+            toast.dismiss(toastId);
+            toast.success(`Downloaded ${count} photos in ZIP!`);
             trackEvent("batch_zip_downloaded", {
                 event: slug,
                 type: "selected_photos",
@@ -180,7 +187,8 @@ export default function EventGalleryClient() {
             setSelectedPhotoIds(new Set());
         } catch (err) {
             console.error("Bulk download error:", err);
-            toast.error("Failed to download selected photos", { id: toastId });
+            toast.dismiss(toastId);
+            toast.error("Failed to download selected photos");
         } finally {
             setDownloadingSelectedZip(false);
         }
@@ -284,6 +292,11 @@ export default function EventGalleryClient() {
                     if (!append) {
                         setActiveTab("my");
                     }
+                } else if (res.status === 404) {
+                    // Stale guest search session (record deleted on server)
+                    localStorage.removeItem(`last_guest_${slug}`);
+                    setMatchedGuestId(null);
+                    setMatchedPhotos([]);
                 }
             } catch (err) {
                 console.error("Error fetching matched photos:", err);
@@ -291,7 +304,7 @@ export default function EventGalleryClient() {
                 setLoadingMoreMatches(false);
             }
         },
-        [API_URL]
+        [API_URL, slug]
     );
 
     // Trigger photos load when verified
@@ -484,6 +497,14 @@ export default function EventGalleryClient() {
     const handleDownloadZip = async () => {
         if (!matchedGuestId) return;
         setDownloadingZip(true);
+        const count = matchedTotalCount || matchedPhotos.length;
+        const toastId = toast.loading(
+            `Packaging ${count} high-res photos into ZIP...`,
+            {
+                description: "Generating your archive on the server. Your download will start automatically in a few seconds!",
+                duration: 60000,
+            }
+        );
         try {
             const res = await fetch(`${API_URL}/guests/${matchedGuestId}/download-zip`);
             if (!res.ok) throw new Error("Failed to create ZIP");
@@ -497,14 +518,16 @@ export default function EventGalleryClient() {
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
-            toast.success("ZIP download started!");
+            toast.dismiss(toastId);
+            toast.success(`ZIP ready! Download started for ${count} photos.`);
             trackEvent("batch_zip_downloaded", {
                 event: slug,
-                photo_count: matchedPhotos.length,
+                photo_count: count,
             });
         } catch (err) {
             console.error("Download ZIP error:", err);
-            toast.error("Could not download photos archive");
+            toast.dismiss(toastId);
+            toast.error("Could not download photos archive. Please try again.");
         } finally {
             setDownloadingZip(false);
         }
@@ -680,8 +703,17 @@ export default function EventGalleryClient() {
                                     disabled={downloadingZip}
                                     className="h-7 text-xs gap-1 font-medium bg-background/80 hover:bg-background border border-border shadow-xs"
                                 >
-                                    {downloadingZip ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Archive className="w-3 h-3 text-indigo-500" />}
-                                    Download All ({matchedTotalCount || matchedPhotos.length})
+                                    {downloadingZip ? (
+                                        <>
+                                            <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                                            <span>Packaging ZIP...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Archive className="w-3 h-3 text-indigo-500" />
+                                            <span>Download All ({matchedTotalCount || matchedPhotos.length})</span>
+                                        </>
+                                    )}
                                 </Button>
                             )}
                         </div>
@@ -900,11 +932,16 @@ export default function EventGalleryClient() {
                         className="h-8 px-4 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-full shadow-md gap-1.5 active:scale-[0.98] transition-all"
                     >
                         {downloadingSelectedZip ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Packaging ZIP...</span>
+                            </>
                         ) : (
-                            <Download className="w-3.5 h-3.5" />
+                            <>
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Download ZIP ({selectedPhotoIds.size})</span>
+                            </>
                         )}
-                        <span>Download ZIP ({selectedPhotoIds.size})</span>
                     </Button>
 
                     <Button

@@ -91,11 +91,13 @@ export default function GuestGalleryClient() {
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
-            toast.success(`Downloaded ${count} photos in ZIP!`, { id: toastId });
+            toast.dismiss(toastId);
+            toast.success(`Downloaded ${count} photos in ZIP!`);
             setSelectedPhotoIds(new Set());
         } catch (err) {
             console.error("Bulk download error:", err);
-            toast.error("Failed to download selected photos", { id: toastId });
+            toast.dismiss(toastId);
+            toast.error("Failed to download selected photos");
         } finally {
             setDownloadingSelectedZip(false);
         }
