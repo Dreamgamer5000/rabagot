@@ -7,6 +7,7 @@ import { useTheme } from "next-themes";
 import { Moon, Sun, Laptop, Lock, Home, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Cookies from "js-cookie";
+import { trackEvent } from "@/lib/analytics";
 
 export function Navbar() {
     const { theme, setTheme } = useTheme();
@@ -125,7 +126,11 @@ export function Navbar() {
 
                     {/* Mobile single-button quick toggle (Sun <-> Moon) */}
                     <button
-                        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                        onClick={() => {
+                            const next = theme === 'dark' ? 'light' : 'dark';
+                            setTheme(next);
+                            trackEvent("theme_toggled", { theme: next });
+                        }}
                         className="sm:hidden p-2 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-foreground shadow-xs hover:scale-105 transition-all"
                         title="Toggle theme"
                         aria-label="Toggle theme"
@@ -136,7 +141,10 @@ export function Navbar() {
                     {/* Desktop / Tablet 3-state theme selector */}
                     <div className="hidden sm:flex items-center bg-slate-100 dark:bg-slate-800 rounded-full p-1 border border-slate-200 dark:border-slate-700 shadow-inner">
                         <button
-                            onClick={() => setTheme("light")}
+                            onClick={() => {
+                                setTheme("light");
+                                trackEvent("theme_toggled", { theme: "light" });
+                            }}
                             className={`p-1.5 rounded-full transition-all ${theme === 'light'
                                 ? 'bg-white text-amber-500 shadow-sm'
                                 : 'text-slate-400 dark:hover:text-slate-200 hover:text-slate-600 uppercase'}`}
@@ -145,7 +153,10 @@ export function Navbar() {
                             <Sun className="w-4 h-4" />
                         </button>
                         <button
-                            onClick={() => setTheme("dark")}
+                            onClick={() => {
+                                setTheme("dark");
+                                trackEvent("theme_toggled", { theme: "dark" });
+                            }}
                             className={`p-1.5 rounded-full transition-all ${theme === 'dark'
                                 ? 'bg-indigo-600 text-white shadow-sm'
                                 : 'text-slate-400 dark:hover:text-slate-200 hover:text-slate-600'}`}
@@ -154,7 +165,10 @@ export function Navbar() {
                             <Moon className="w-4 h-4" />
                         </button>
                         <button
-                            onClick={() => setTheme("system")}
+                            onClick={() => {
+                                setTheme("system");
+                                trackEvent("theme_toggled", { theme: "system" });
+                            }}
                             className={`p-1.5 rounded-full transition-all ${theme === 'system'
                                 ? 'bg-slate-500 text-white shadow-sm'
                                 : 'text-slate-400 dark:hover:text-slate-200 hover:text-slate-600'}`}

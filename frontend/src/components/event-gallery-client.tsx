@@ -29,6 +29,7 @@ import { toast } from "sonner";
 import Webcam from "react-webcam";
 import PhotoLightboxModal, { LightboxPhoto } from "@/components/photo-lightbox-modal";
 import { compressImage } from "@/lib/image-compressor";
+import { trackEvent } from "@/lib/analytics";
 
 interface EventData {
     _id: string;
@@ -167,6 +168,11 @@ export default function EventGalleryClient() {
             a.remove();
             window.URL.revokeObjectURL(url);
             toast.success(`Downloaded ${count} photos in ZIP!`, { id: toastId });
+            trackEvent("batch_zip_downloaded", {
+                event: slug,
+                type: "selected_photos",
+                photo_count: count,
+            });
             setSelectedPhotoIds(new Set());
         } catch (err) {
             console.error("Bulk download error:", err);
@@ -327,8 +333,9 @@ export default function EventGalleryClient() {
             const blob = new Blob([ab], { type: mimeString });
             const file = new File([blob], "selfie.jpg", { type: "image/jpeg" });
             setSelfieFile(file);
+            trackEvent("selfie_captured", { mode: "live_camera", event: slug });
         }
-    }, [webcamRef]);
+    }, [webcamRef, slug]);
 
     const retakeSelfie = () => {
         setCapturedSelfie(null);
@@ -341,6 +348,7 @@ export default function EventGalleryClient() {
             const file = e.target.files[0];
             setSelfieFile(file);
             setCapturedSelfie(URL.createObjectURL(file));
+            trackEvent("selfie_captured", { mode: "file_upload", event: slug });
         }
     };
 
@@ -360,6 +368,11 @@ export default function EventGalleryClient() {
         setSearchingAI(true);
         const sanitizedName = guestName.trim();
         const safeEmail = guestEmail.trim() || `${sanitizedName.toLowerCase().replace(/[^a-z0-9]/g, "") || "guest"}@guest.com`;
+
+        trackEvent("selfie_search_submitted", {
+            event: slug,
+            has_email: Boolean(guestEmail.trim()),
+        });
 
         try {
             // Compress and optimize selfie client-side to prevent large payload errors and speed up processing
@@ -422,6 +435,10 @@ export default function EventGalleryClient() {
 
                             toast.success(`Found ${statusData.match_count || 0} matching photos!`);
                             fetchMatchedPhotos(reqId);
+                            trackEvent("selfie_matches_returned", {
+                                event: slug,
+                                match_count: statusData.match_count || 0,
+                            });
                         } else if (statusData.status === "error") {
                             clearInterval(pollInterval);
                             setSearchingAI(false);
@@ -463,6 +480,10 @@ export default function EventGalleryClient() {
             a.remove();
             window.URL.revokeObjectURL(url);
             toast.success("ZIP download started!");
+            trackEvent("batch_zip_downloaded", {
+                event: slug,
+                photo_count: matchedPhotos.length,
+            });
         } catch (err) {
             console.error("Download ZIP error:", err);
             toast.error("Could not download photos archive");
@@ -593,6 +614,7 @@ export default function EventGalleryClient() {
                                 setIsSearchModalOpen(true);
                                 setCapturedSelfie(null);
                                 setSelfieFile(null);
+                                trackEvent("selfie_modal_opened", { event: slug });
                             }}
                             className="h-9 sm:h-10 px-3 sm:px-4 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold shadow-md shadow-indigo-500/20 hover:shadow-indigo-500/30 transition-all rounded-full flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
                         >
@@ -672,7 +694,13 @@ export default function EventGalleryClient() {
                                 {photos.map((photo, index) => (
                                     <div
                                         key={photo.id}
-                                        onClick={() => setLightboxIndex(index)}
+                                        onClick={() => {
+                                            setLightboxIndex(index);
+                                            trackEvent("lightbox_photo_viewed", {
+                                                tab: activeTab,
+                                                photo_id: photo.id,
+                                            });
+                                        }}
                                         className={`group relative aspect-square bg-muted/40 rounded-xl overflow-hidden cursor-pointer border transition-all duration-300 shadow-xs hover:shadow-lg hover:-translate-y-0.5 ${
                                             selectedPhotoIds.has(photo.id)
                                                 ? "border-indigo-500 ring-2 ring-indigo-500/80 shadow-indigo-500/10"
@@ -934,6 +962,7 @@ export default function EventGalleryClient() {
                                                 onUserMediaError={() => {
                                                     setUseWebcam(false);
                                                     toast.info("Camera not available. Switched to file upload.");
+                                                    trackEvent("camera_permission_denied", { event: slug });
                                                 }}
                                             />
                                             <Button
@@ -964,7 +993,11 @@ export default function EventGalleryClient() {
                                     <div className="flex justify-center">
                                         <button
                                             type="button"
-                                            onClick={() => setUseWebcam(!useWebcam)}
+                                            onClick={() => {
+                                                const nextMode = !useWebcam;
+                                                setUseWebcam(nextMode);
+                                                trackEvent("camera_mode_selected", { mode: nextMode ? "live_camera" : "file_upload" });
+                                            }}
                                             className="text-xs text-indigo-500 hover:text-indigo-600 font-medium underline underline-offset-4"
                                         >
                                             {useWebcam ? "Or upload a photo from device" : "Or use live camera"}

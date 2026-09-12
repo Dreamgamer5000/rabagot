@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { X, ChevronLeft, ChevronRight, Download, ZoomIn, ZoomOut, RotateCcw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { trackEvent } from "@/lib/analytics";
 
 export interface LightboxPhoto {
     id: string;
@@ -170,7 +171,16 @@ export default function PhotoLightboxModal({
                         className="h-9 gap-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/10 backdrop-blur-md shadow-lg"
                         asChild
                     >
-                        <a href={downloadSrc} download={currentPhoto.filename}>
+                        <a
+                            href={downloadSrc}
+                            download={currentPhoto.filename}
+                            onClick={() => {
+                                trackEvent("single_photo_downloaded", {
+                                    photo_id: currentPhoto.id,
+                                    filename: currentPhoto.filename,
+                                });
+                            }}
+                        >
                             <Download className="w-4 h-4" />
                             <span className="hidden sm:inline">Download</span>
                         </a>

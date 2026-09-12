@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Calendar, Lock, ArrowRight, Search, PartyPopper } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { trackEvent } from "@/lib/analytics";
 
 interface PublicEvent {
     _id: string;
@@ -77,6 +78,7 @@ export default function EventsListClient() {
             if (res.ok) {
                 // Store code in session storage for the upload page to pick up
                 sessionStorage.setItem(`event_code_${event.slug}`, secretCode);
+                trackEvent("event_passcode_verified", { slug: event.slug });
                 toast.success("Code verified! Redirecting...");
                 router.push(`/event/${event.slug}`);
             } else {

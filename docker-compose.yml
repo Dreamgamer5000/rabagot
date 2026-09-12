@@ -21,6 +21,8 @@ services:
       args:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
         - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-picshare-backend:8000}
+        - NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}
+        - NEXT_PUBLIC_UMAMI_SCRIPT_URL=${NEXT_PUBLIC_UMAMI_SCRIPT_URL:-https://cloud.umami.is/script.js}
     init: true
     container_name: picshare-frontend
     ports:
@@ -31,6 +33,8 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=/api
       - BACKEND_HOSTNAME=picshare-backend:8000
+      - NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}
+      - NEXT_PUBLIC_UMAMI_SCRIPT_URL=${NEXT_PUBLIC_UMAMI_SCRIPT_URL:-https://cloud.umami.is/script.js}
 # Define named volumes if you prefer, but host-binding is simpler for VPS deployments
 # volumes:
 #   backend_data:
