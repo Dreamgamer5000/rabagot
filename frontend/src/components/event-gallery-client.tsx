@@ -80,6 +80,10 @@ export default function EventGalleryClient() {
     const [matchedGuestId, setMatchedGuestId] = useState<string | null>(null);
     const [matchedPhotos, setMatchedPhotos] = useState<PhotoItem[]>([]);
     const [matchedGuestName, setMatchedGuestName] = useState<string | null>(null);
+    const [matchedPage, setMatchedPage] = useState(1);
+    const [matchedTotalPages, setMatchedTotalPages] = useState(1);
+    const [matchedTotalCount, setMatchedTotalCount] = useState(0);
+    const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
     const [downloadingZip, setDownloadingZip] = useState(false);
 
     // Multi-Select Photos & Bulk ZIP Download
@@ -260,17 +264,31 @@ export default function EventGalleryClient() {
 
     // 3. Fetch Matched Photos for Guest
     const fetchMatchedPhotos = useCallback(
-        async (guestId: string) => {
+        async (guestId: string, pageNum: number = 1, append: boolean = false) => {
             try {
-                const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=1&limit=100`);
+                if (append) {
+                    setLoadingMoreMatches(true);
+                }
+                const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=${pageNum}&limit=200`);
                 if (res.ok) {
                     const data = await res.json();
-                    setMatchedPhotos(data.photos || []);
+                    if (append) {
+                        setMatchedPhotos((prev) => [...prev, ...(data.photos || [])]);
+                    } else {
+                        setMatchedPhotos(data.photos || []);
+                    }
                     setMatchedGuestName(data.guest_name);
-                    setActiveTab("my");
+                    setMatchedTotalCount(data.match_count || 0);
+                    setMatchedTotalPages(data.total_pages || 1);
+                    setMatchedPage(pageNum);
+                    if (!append) {
+                        setActiveTab("my");
+                    }
                 }
             } catch (err) {
                 console.error("Error fetching matched photos:", err);
+            } finally {
+                setLoadingMoreMatches(false);
             }
         },
         [API_URL]
@@ -281,7 +299,7 @@ export default function EventGalleryClient() {
         if (isVerified) {
             fetchEventPhotos(1, false);
             if (matchedGuestId) {
-                fetchMatchedPhotos(matchedGuestId);
+                fetchMatchedPhotos(matchedGuestId, 1, false);
             }
         }
     }, [isVerified, fetchEventPhotos, matchedGuestId, fetchMatchedPhotos]);
@@ -434,7 +452,7 @@ export default function EventGalleryClient() {
                             );
 
                             toast.success(`Found ${statusData.match_count || 0} matching photos!`);
-                            fetchMatchedPhotos(reqId);
+                            fetchMatchedPhotos(reqId, 1, false);
                             trackEvent("selfie_matches_returned", {
                                 event: slug,
                                 match_count: statusData.match_count || 0,
@@ -616,9 +634,9 @@ export default function EventGalleryClient() {
                                 setSelfieFile(null);
                                 trackEvent("selfie_modal_opened", { event: slug });
                             }}
-                            className="h-9 sm:h-10 px-3 sm:px-4 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold shadow-md shadow-indigo-500/20 hover:shadow-indigo-500/30 transition-all rounded-full flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
+                            className="h-9 sm:h-10 px-3 sm:px-4 bg-gradient-to-r from-[#1B72E8] via-[#8E51DA] to-[#D94F70] hover:brightness-105 text-white font-medium shadow-sm hover:shadow-md border border-white/15 active:scale-[0.98] transition-all rounded-full flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
                         >
-                            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 animate-pulse text-amber-300 shrink-0" />
+                            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white/95 shrink-0" />
                             <span className="hidden sm:inline">Find Photos with 1 Selfie</span>
                             <span className="sm:hidden inline">Find with Selfie</span>
                         </Button>
@@ -650,7 +668,7 @@ export default function EventGalleryClient() {
                                     }`}
                                 >
                                     <User className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-                                    <span className="truncate">{matchedGuestName}&apos;s Photos ({matchedPhotos.length})</span>
+                                    <span className="truncate">{matchedGuestName}&apos;s Photos ({matchedTotalCount || matchedPhotos.length})</span>
                                 </button>
                             </div>
 
@@ -663,7 +681,7 @@ export default function EventGalleryClient() {
                                     className="h-7 text-xs gap-1 font-medium bg-background/80 hover:bg-background border border-border shadow-xs"
                                 >
                                     {downloadingZip ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Archive className="w-3 h-3 text-indigo-500" />}
-                                    Download All ({matchedPhotos.length})
+                                    Download All ({matchedTotalCount || matchedPhotos.length})
                                 </Button>
                             )}
                         </div>
@@ -836,6 +854,21 @@ export default function EventGalleryClient() {
                                 ))}
                             </div>
                         )}
+
+                        {/* Load More Button for Matched Photos */}
+                        {matchedPage < matchedTotalPages && (
+                            <div className="flex justify-center mt-10 mb-6">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => fetchMatchedPhotos(matchedGuestId!, matchedPage + 1, true)}
+                                    disabled={loadingMoreMatches}
+                                    className="h-11 px-8 rounded-full border-border/80 hover:bg-muted font-medium shadow-xs"
+                                >
+                                    {loadingMoreMatches ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                                    Load More Photos ({matchedTotalCount - matchedPhotos.length} remaining)
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 )}
             </main>
@@ -864,7 +897,7 @@ export default function EventGalleryClient() {
                         size="sm"
                         onClick={handleDownloadSelectedZip}
                         disabled={downloadingSelectedZip}
-                        className="h-8 px-4 text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full shadow-lg gap-1.5"
+                        className="h-8 px-4 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-full shadow-md gap-1.5 active:scale-[0.98] transition-all"
                     >
                         {downloadingSelectedZip ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -903,7 +936,7 @@ export default function EventGalleryClient() {
                         </Button>
 
                         <CardHeader className="text-center pb-2 sm:pb-4 pt-5 sm:pt-6 px-4 sm:px-6 shrink-0">
-                            <div className="mx-auto w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-2xl flex items-center justify-center mb-2 shadow-lg shadow-indigo-500/20">
+                            <div className="mx-auto w-10 h-10 sm:w-12 sm:h-12 bg-primary/10 text-primary border border-primary/20 rounded-2xl flex items-center justify-center mb-2 shadow-xs">
                                 <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
                             </div>
                             <CardTitle className="text-xl sm:text-2xl font-bold">Find Your Photos</CardTitle>

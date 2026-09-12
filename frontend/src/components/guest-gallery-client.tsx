@@ -111,7 +111,7 @@ export default function GuestGalleryClient() {
     const fetchMatches = useCallback(async (pageNum: number) => {
         try {
             setLoading(true);
-            const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=${pageNum}&limit=50`);
+            const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=${pageNum}&limit=200`);
             if (!res.ok) throw new Error("Failed to load your gallery.");
             const result = await res.json();
 
@@ -518,7 +518,7 @@ export default function GuestGalleryClient() {
                             size="sm"
                             onClick={handleDownloadSelectedZip}
                             disabled={downloadingSelectedZip}
-                            className="h-8 px-4 text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full shadow-lg gap-1.5"
+                            className="h-8 px-4 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-full shadow-md gap-1.5 active:scale-[0.98] transition-all"
                         >
                             {downloadingSelectedZip ? (
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
