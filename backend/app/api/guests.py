@@ -22,9 +22,13 @@ settings = get_settings()
 
 os.makedirs(settings.GUEST_SELFIES_DIR, exist_ok=True)
 
+# Concurrency locks to protect CPU and RAM
+selfie_processing_lock = asyncio.Lock()
+guest_zip_lock = asyncio.Lock()
 
-async def process_guest_request(request_id: str, event_slug: str, name: str,
-                                email: str, selfie_path: str):
+
+async def _process_guest_request_internal(request_id: str, event_slug: str, name: str,
+                                          email: str, selfie_path: str):
     try:
         # 1. Extract face embedding from guest selfie
         faces = await asyncio.to_thread(face_service.get_embeddings, selfie_path)
@@ -111,6 +115,12 @@ async def process_guest_request(request_id: str, event_slug: str, name: str,
         await db.execute(
             "UPDATE guests SET status = ?, error = ? WHERE id = ?",
             ("error", str(e), request_id))
+
+
+async def process_guest_request(request_id: str, event_slug: str, name: str,
+                                email: str, selfie_path: str):
+    async with selfie_processing_lock:
+        await _process_guest_request_internal(request_id, event_slug, name, email, selfie_path)
 
 
 @router.post("/request")
@@ -336,8 +346,7 @@ async def get_guest_matches(request_id: str, page: int = 1, limit: int = 50):
     }
 
 
-@router.get("/{request_id}/download-zip")
-async def download_guest_zip(request_id: str):
+async def _generate_guest_zip(request_id: str):
     row = await db.fetch_one("SELECT * FROM guests WHERE id = ?", (request_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -347,7 +356,6 @@ async def download_guest_zip(request_id: str):
         raise HTTPException(status_code=400, detail="No photos to download")
 
     zip_buffer = io.BytesIO()
-
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         placeholders = ",".join(["?"] * len(photo_ids))
         photo_rows = await db.fetch_all(
@@ -404,4 +412,10 @@ async def download_guest_zip(request_id: str):
             "Content-Disposition": f"attachment; filename={safe_name}_photos.zip",
             "Content-Length": str(len(zip_data))
         })
+
+
+@router.get("/{request_id}/download-zip")
+async def download_guest_zip(request_id: str):
+    async with guest_zip_lock:
+        return await _generate_guest_zip(request_id)
 

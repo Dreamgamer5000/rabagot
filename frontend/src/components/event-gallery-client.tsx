@@ -154,8 +154,8 @@ export default function EventGalleryClient() {
         const toastId = toast.loading(
             `Packaging ${count} selected photo${count !== 1 ? 's' : ''} into ZIP...`,
             {
-                description: "Generating your archive on the server. Your download will begin shortly!",
-                duration: 60000,
+                description: "Generating archive on server. If another download is in progress, your request is queued automatically. Please keep this tab open!",
+                duration: 90000,
             }
         );
         try {

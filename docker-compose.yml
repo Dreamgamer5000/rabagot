@@ -7,7 +7,7 @@ services:
       - ./data:/app/data:z
     env_file:
       - .env
-    restart: always
+    restart: "no"
     ports:
       - 8000:8000
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -29,7 +29,7 @@ services:
       - "3005:3000"
     depends_on:
       - backend
-    restart: always
+    restart: "no"
     environment:
       - NEXT_PUBLIC_API_URL=/api
       - BACKEND_HOSTNAME=picshare-backend:8000
