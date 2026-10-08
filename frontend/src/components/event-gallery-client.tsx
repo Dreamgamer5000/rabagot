@@ -29,6 +29,7 @@ import { toast } from "sonner";
 import Webcam from "react-webcam";
 import PhotoLightboxModal, { LightboxPhoto } from "@/components/photo-lightbox-modal";
 import { compressImage } from "@/lib/image-compressor";
+import { trackEvent } from "@/lib/analytics";
 
 interface EventData {
     _id: string;
@@ -79,6 +80,10 @@ export default function EventGalleryClient() {
     const [matchedGuestId, setMatchedGuestId] = useState<string | null>(null);
     const [matchedPhotos, setMatchedPhotos] = useState<PhotoItem[]>([]);
     const [matchedGuestName, setMatchedGuestName] = useState<string | null>(null);
+    const [matchedPage, setMatchedPage] = useState(1);
+    const [matchedTotalPages, setMatchedTotalPages] = useState(1);
+    const [matchedTotalCount, setMatchedTotalCount] = useState(0);
+    const [loadingMoreMatches, setLoadingMoreMatches] = useState(false);
     const [downloadingZip, setDownloadingZip] = useState(false);
 
     // Multi-Select Photos & Bulk ZIP Download
@@ -88,7 +93,7 @@ export default function EventGalleryClient() {
     // Smart Scroll-Up Sticky Header State
     const [isHeaderVisible, setIsHeaderVisible] = useState(true);
 
-    // Auto-hide header on scroll down, instantly reveal on scroll up
+    // Instant Auto-hide header on scroll down, immediately reveal on scroll up in sync with navbar
     useEffect(() => {
         let prevScrollY = window.scrollY;
         let ticking = false;
@@ -99,12 +104,12 @@ export default function EventGalleryClient() {
                     const currentScrollY = window.scrollY;
 
                     // Always keep header visible when near the top of the page
-                    if (currentScrollY < 60) {
+                    if (currentScrollY < 10) {
                         setIsHeaderVisible(true);
-                    } else if (currentScrollY > prevScrollY && currentScrollY - prevScrollY > 8) {
+                    } else if (currentScrollY > prevScrollY && currentScrollY > 60) {
                         // Scrolling DOWN -> Hide header to maximize photo viewing area
                         setIsHeaderVisible(false);
-                    } else if (currentScrollY < prevScrollY && prevScrollY - currentScrollY > 6) {
+                    } else if (currentScrollY < prevScrollY) {
                         // Scrolling UP -> Immediately slide header down into view
                         setIsHeaderVisible(true);
                     }
@@ -146,7 +151,13 @@ export default function EventGalleryClient() {
         if (selectedPhotoIds.size === 0) return;
         setDownloadingSelectedZip(true);
         const count = selectedPhotoIds.size;
-        const toastId = toast.loading(`Packaging ${count} high-res master photo${count !== 1 ? 's' : ''} into ZIP...`);
+        const toastId = toast.loading(
+            `Packaging ${count} selected photo${count !== 1 ? 's' : ''} into ZIP...`,
+            {
+                description: "Generating archive on server. If another download is in progress, your request is queued automatically. Please keep this tab open!",
+                duration: 90000,
+            }
+        );
         try {
             const res = await fetch(`${API_URL}/photos/download-zip`, {
                 method: "POST",
@@ -166,11 +177,18 @@ export default function EventGalleryClient() {
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
-            toast.success(`Downloaded ${count} photos in ZIP!`, { id: toastId });
+            toast.dismiss(toastId);
+            toast.success(`Downloaded ${count} photos in ZIP!`);
+            trackEvent("batch_zip_downloaded", {
+                event: slug,
+                type: "selected_photos",
+                photo_count: count,
+            });
             setSelectedPhotoIds(new Set());
         } catch (err) {
             console.error("Bulk download error:", err);
-            toast.error("Failed to download selected photos", { id: toastId });
+            toast.dismiss(toastId);
+            toast.error("Failed to download selected photos");
         } finally {
             setDownloadingSelectedZip(false);
         }
@@ -254,20 +272,39 @@ export default function EventGalleryClient() {
 
     // 3. Fetch Matched Photos for Guest
     const fetchMatchedPhotos = useCallback(
-        async (guestId: string) => {
+        async (guestId: string, pageNum: number = 1, append: boolean = false) => {
             try {
-                const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=1&limit=100`);
+                if (append) {
+                    setLoadingMoreMatches(true);
+                }
+                const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=${pageNum}&limit=200`);
                 if (res.ok) {
                     const data = await res.json();
-                    setMatchedPhotos(data.photos || []);
+                    if (append) {
+                        setMatchedPhotos((prev) => [...prev, ...(data.photos || [])]);
+                    } else {
+                        setMatchedPhotos(data.photos || []);
+                    }
                     setMatchedGuestName(data.guest_name);
-                    setActiveTab("my");
+                    setMatchedTotalCount(data.match_count || 0);
+                    setMatchedTotalPages(data.total_pages || 1);
+                    setMatchedPage(pageNum);
+                    if (!append) {
+                        setActiveTab("my");
+                    }
+                } else if (res.status === 404) {
+                    // Stale guest search session (record deleted on server)
+                    localStorage.removeItem(`last_guest_${slug}`);
+                    setMatchedGuestId(null);
+                    setMatchedPhotos([]);
                 }
             } catch (err) {
                 console.error("Error fetching matched photos:", err);
+            } finally {
+                setLoadingMoreMatches(false);
             }
         },
-        [API_URL]
+        [API_URL, slug]
     );
 
     // Trigger photos load when verified
@@ -275,7 +312,7 @@ export default function EventGalleryClient() {
         if (isVerified) {
             fetchEventPhotos(1, false);
             if (matchedGuestId) {
-                fetchMatchedPhotos(matchedGuestId);
+                fetchMatchedPhotos(matchedGuestId, 1, false);
             }
         }
     }, [isVerified, fetchEventPhotos, matchedGuestId, fetchMatchedPhotos]);
@@ -327,8 +364,9 @@ export default function EventGalleryClient() {
             const blob = new Blob([ab], { type: mimeString });
             const file = new File([blob], "selfie.jpg", { type: "image/jpeg" });
             setSelfieFile(file);
+            trackEvent("selfie_captured", { mode: "live_camera", event: slug });
         }
-    }, [webcamRef]);
+    }, [webcamRef, slug]);
 
     const retakeSelfie = () => {
         setCapturedSelfie(null);
@@ -341,6 +379,7 @@ export default function EventGalleryClient() {
             const file = e.target.files[0];
             setSelfieFile(file);
             setCapturedSelfie(URL.createObjectURL(file));
+            trackEvent("selfie_captured", { mode: "file_upload", event: slug });
         }
     };
 
@@ -360,6 +399,11 @@ export default function EventGalleryClient() {
         setSearchingAI(true);
         const sanitizedName = guestName.trim();
         const safeEmail = guestEmail.trim() || `${sanitizedName.toLowerCase().replace(/[^a-z0-9]/g, "") || "guest"}@guest.com`;
+
+        trackEvent("selfie_search_submitted", {
+            event: slug,
+            has_email: Boolean(guestEmail.trim()),
+        });
 
         try {
             // Compress and optimize selfie client-side to prevent large payload errors and speed up processing
@@ -421,7 +465,11 @@ export default function EventGalleryClient() {
                             );
 
                             toast.success(`Found ${statusData.match_count || 0} matching photos!`);
-                            fetchMatchedPhotos(reqId);
+                            fetchMatchedPhotos(reqId, 1, false);
+                            trackEvent("selfie_matches_returned", {
+                                event: slug,
+                                match_count: statusData.match_count || 0,
+                            });
                         } else if (statusData.status === "error") {
                             clearInterval(pollInterval);
                             setSearchingAI(false);
@@ -449,6 +497,14 @@ export default function EventGalleryClient() {
     const handleDownloadZip = async () => {
         if (!matchedGuestId) return;
         setDownloadingZip(true);
+        const count = matchedTotalCount || matchedPhotos.length;
+        const toastId = toast.loading(
+            `Packaging ${count} high-res photos into ZIP...`,
+            {
+                description: "Generating your archive on the server. Your download will start automatically in a few seconds!",
+                duration: 60000,
+            }
+        );
         try {
             const res = await fetch(`${API_URL}/guests/${matchedGuestId}/download-zip`);
             if (!res.ok) throw new Error("Failed to create ZIP");
@@ -462,10 +518,16 @@ export default function EventGalleryClient() {
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
-            toast.success("ZIP download started!");
+            toast.dismiss(toastId);
+            toast.success(`ZIP ready! Download started for ${count} photos.`);
+            trackEvent("batch_zip_downloaded", {
+                event: slug,
+                photo_count: count,
+            });
         } catch (err) {
             console.error("Download ZIP error:", err);
-            toast.error("Could not download photos archive");
+            toast.dismiss(toastId);
+            toast.error("Could not download photos archive. Please try again.");
         } finally {
             setDownloadingZip(false);
         }
@@ -547,30 +609,30 @@ export default function EventGalleryClient() {
         <div className="min-h-screen bg-background text-foreground flex flex-col">
             {/* Top Navigation & Smart Scroll-Up Sticky Header (offset below 64px global navbar) */}
             <header
-                className={`sticky top-16 z-40 w-full border-b border-border/60 bg-background/90 backdrop-blur-xl transition-transform duration-300 ease-in-out shadow-xs ${
+                className={`sticky top-16 z-40 w-full border-b border-border/60 bg-background/90 backdrop-blur-xl transition-transform duration-200 ease-out shadow-xs ${
                     isHeaderVisible ? "translate-y-0" : "-translate-y-[calc(100%+4.5rem)]"
                 }`}
             >
-                <div className="container mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="container mx-auto px-3 sm:px-4 py-3 flex items-center justify-between gap-2 sm:gap-3">
                     {/* Left: Back button & Event Name */}
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
                         <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => router.push("/events")}
-                            className="h-9 w-9 rounded-full text-muted-foreground hover:text-foreground shrink-0"
+                            className="h-8 w-8 sm:h-9 sm:w-9 rounded-full text-muted-foreground hover:text-foreground shrink-0"
                             title="Back to Events"
                         >
-                            <ArrowLeft className="w-5 h-5" />
+                            <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
                         </Button>
 
                         <div className="min-w-0">
-                            <h1 className="text-lg sm:text-xl font-bold truncate leading-tight flex items-center gap-2">
+                            <h1 className="text-base sm:text-xl font-bold truncate leading-tight flex items-center gap-2">
                                 {event.name}
                             </h1>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                            <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-muted-foreground mt-0.5">
                                 <span className="flex items-center gap-1">
-                                    <Calendar className="w-3.5 h-3.5" />
+                                    <Calendar className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                                     {new Date(event.date).toLocaleDateString(undefined, {
                                         month: "short",
                                         day: "numeric",
@@ -579,7 +641,7 @@ export default function EventGalleryClient() {
                                 </span>
                                 <span>•</span>
                                 <span className="flex items-center gap-1 font-medium text-foreground/80">
-                                    <Images className="w-3.5 h-3.5 text-indigo-500" />
+                                    <Images className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500" />
                                     {totalPhotos} photo{totalPhotos !== 1 ? "s" : ""}
                                 </span>
                             </div>
@@ -587,17 +649,19 @@ export default function EventGalleryClient() {
                     </div>
 
                     {/* Right: Primary "Search My Photos (AI)" Action Button */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                         <Button
                             onClick={() => {
                                 setIsSearchModalOpen(true);
                                 setCapturedSelfie(null);
                                 setSelfieFile(null);
+                                trackEvent("selfie_modal_opened", { event: slug });
                             }}
-                            className="h-10 px-4 bg-gradient-to-r from-indigo-600 via-indigo-700 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold shadow-md shadow-indigo-500/20 hover:shadow-indigo-500/30 transition-all rounded-full flex items-center gap-2"
+                            className="h-9 sm:h-10 px-3 sm:px-4 bg-gradient-to-r from-[#1B72E8] via-[#8E51DA] to-[#D94F70] hover:brightness-105 text-white font-medium shadow-sm hover:shadow-md border border-white/15 active:scale-[0.98] transition-all rounded-full flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm"
                         >
-                            <Sparkles className="w-4 h-4 animate-pulse text-amber-300" />
-                            <span>Find My Photos</span>
+                            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white/95 shrink-0" />
+                            <span className="hidden sm:inline">Find Photos with 1 Selfie</span>
+                            <span className="sm:hidden inline">Find with Selfie</span>
                         </Button>
                     </div>
                 </div>
@@ -605,11 +669,11 @@ export default function EventGalleryClient() {
                 {/* Sub-Header: Tabs (All Photos vs My Matches) */}
                 {matchedGuestId && (
                     <div className="border-t border-border/40 bg-muted/30">
-                        <div className="container mx-auto px-4 py-1.5 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
+                        <div className="container mx-auto px-3 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
                                 <button
                                     onClick={() => setActiveTab("all")}
-                                    className={`px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 ${
+                                    className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 shrink-0 ${
                                         activeTab === "all"
                                             ? "bg-indigo-600 text-white shadow-sm"
                                             : "text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -620,14 +684,14 @@ export default function EventGalleryClient() {
                                 </button>
                                 <button
                                     onClick={() => setActiveTab("my")}
-                                    className={`px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 ${
+                                    className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 min-w-0 max-w-[160px] sm:max-w-none ${
                                         activeTab === "my"
                                             ? "bg-indigo-600 text-white shadow-sm"
                                             : "text-muted-foreground hover:text-foreground hover:bg-muted"
                                     }`}
                                 >
-                                    <User className="w-3.5 h-3.5 text-amber-300" />
-                                    {matchedGuestName}&apos;s Photos ({matchedPhotos.length})
+                                    <User className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                                    <span className="truncate">{matchedGuestName}&apos;s Photos ({matchedTotalCount || matchedPhotos.length})</span>
                                 </button>
                             </div>
 
@@ -639,8 +703,17 @@ export default function EventGalleryClient() {
                                     disabled={downloadingZip}
                                     className="h-7 text-xs gap-1 font-medium bg-background/80 hover:bg-background border border-border shadow-xs"
                                 >
-                                    {downloadingZip ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Archive className="w-3 h-3 text-indigo-500" />}
-                                    Download All ({matchedPhotos.length})
+                                    {downloadingZip ? (
+                                        <>
+                                            <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                                            <span>Packaging ZIP...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Archive className="w-3 h-3 text-indigo-500" />
+                                            <span>Download All ({matchedTotalCount || matchedPhotos.length})</span>
+                                        </>
+                                    )}
                                 </Button>
                             )}
                         </div>
@@ -671,7 +744,13 @@ export default function EventGalleryClient() {
                                 {photos.map((photo, index) => (
                                     <div
                                         key={photo.id}
-                                        onClick={() => setLightboxIndex(index)}
+                                        onClick={() => {
+                                            setLightboxIndex(index);
+                                            trackEvent("lightbox_photo_viewed", {
+                                                tab: activeTab,
+                                                photo_id: photo.id,
+                                            });
+                                        }}
                                         className={`group relative aspect-square bg-muted/40 rounded-xl overflow-hidden cursor-pointer border transition-all duration-300 shadow-xs hover:shadow-lg hover:-translate-y-0.5 ${
                                             selectedPhotoIds.has(photo.id)
                                                 ? "border-indigo-500 ring-2 ring-indigo-500/80 shadow-indigo-500/10"
@@ -807,6 +886,21 @@ export default function EventGalleryClient() {
                                 ))}
                             </div>
                         )}
+
+                        {/* Load More Button for Matched Photos */}
+                        {matchedPage < matchedTotalPages && (
+                            <div className="flex justify-center mt-10 mb-6">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => fetchMatchedPhotos(matchedGuestId!, matchedPage + 1, true)}
+                                    disabled={loadingMoreMatches}
+                                    className="h-11 px-8 rounded-full border-border/80 hover:bg-muted font-medium shadow-xs"
+                                >
+                                    {loadingMoreMatches ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                                    Load More Photos ({matchedTotalCount - matchedPhotos.length} remaining)
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 )}
             </main>
@@ -835,14 +929,19 @@ export default function EventGalleryClient() {
                         size="sm"
                         onClick={handleDownloadSelectedZip}
                         disabled={downloadingSelectedZip}
-                        className="h-8 px-4 text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full shadow-lg gap-1.5"
+                        className="h-8 px-4 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-full shadow-md gap-1.5 active:scale-[0.98] transition-all"
                     >
                         {downloadingSelectedZip ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Packaging ZIP...</span>
+                            </>
                         ) : (
-                            <Download className="w-3.5 h-3.5" />
+                            <>
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Download ZIP ({selectedPhotoIds.size})</span>
+                            </>
                         )}
-                        <span>Download ZIP ({selectedPhotoIds.size})</span>
                     </Button>
 
                     <Button
@@ -859,8 +958,8 @@ export default function EventGalleryClient() {
 
             {/* AI Selfie Search Modal */}
             {isSearchModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in">
-                    <Card className="w-full max-w-lg border-border/80 shadow-2xl bg-card/95 backdrop-blur-xl relative overflow-hidden">
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in overflow-y-auto">
+                    <Card className="w-full max-w-lg max-h-[92dvh] my-auto flex flex-col border-border/80 shadow-2xl bg-card/95 backdrop-blur-xl relative overflow-hidden">
                         <Button
                             variant="ghost"
                             size="icon"
@@ -868,33 +967,33 @@ export default function EventGalleryClient() {
                                 if (!searchingAI) setIsSearchModalOpen(false);
                             }}
                             disabled={searchingAI}
-                            className="absolute top-4 right-4 h-8 w-8 text-muted-foreground hover:text-foreground rounded-full z-10"
+                            className="absolute top-3 right-3 sm:top-4 sm:right-4 h-8 w-8 text-muted-foreground hover:text-foreground rounded-full z-10"
                         >
                             <X className="w-5 h-5" />
                         </Button>
 
-                        <CardHeader className="text-center pb-4">
-                            <div className="mx-auto w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-2xl flex items-center justify-center mb-2 shadow-lg shadow-indigo-500/20">
-                                <Sparkles className="w-6 h-6" />
+                        <CardHeader className="text-center pb-2 sm:pb-4 pt-5 sm:pt-6 px-4 sm:px-6 shrink-0">
+                            <div className="mx-auto w-10 h-10 sm:w-12 sm:h-12 bg-primary/10 text-primary border border-primary/20 rounded-2xl flex items-center justify-center mb-2 shadow-xs">
+                                <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
                             </div>
-                            <CardTitle className="text-2xl font-bold">Find Your Photos</CardTitle>
-                            <CardDescription>
-                                Take a selfie and our AI will automatically find all event photos featuring you.
+                            <CardTitle className="text-xl sm:text-2xl font-bold">Find Your Photos</CardTitle>
+                            <CardDescription className="text-xs sm:text-sm">
+                                Take 1 quick selfie and our smart search will find all your photos from this event in seconds.
                             </CardDescription>
                         </CardHeader>
 
-                        <form onSubmit={handleAISearch}>
-                            <CardContent className="space-y-4">
+                        <form onSubmit={handleAISearch} className="flex flex-col flex-1 overflow-y-auto min-h-0">
+                            <CardContent className="space-y-3 sm:space-y-4 px-4 sm:px-6 flex-1">
                                 {/* Camera / Upload View Area */}
-                                <div className="relative aspect-4/3 w-full bg-black/90 rounded-2xl overflow-hidden border border-border flex items-center justify-center shadow-inner">
+                                <div className="relative aspect-4/3 max-h-[220px] sm:max-h-[300px] w-full bg-black/90 rounded-2xl overflow-hidden border border-border flex items-center justify-center shadow-inner">
                                     {searchingAI ? (
                                         <div className="flex flex-col items-center justify-center text-center p-6 space-y-4">
                                             <div className="relative">
-                                                <div className="w-20 h-20 rounded-full border-4 border-indigo-500/30 border-t-indigo-500 animate-spin" />
-                                                <Sparkles className="w-8 h-8 text-indigo-400 absolute inset-0 m-auto animate-pulse" />
+                                                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-indigo-500/30 border-t-indigo-500 animate-spin" />
+                                                <Sparkles className="w-6 h-6 sm:w-8 sm:h-8 text-indigo-400 absolute inset-0 m-auto animate-pulse" />
                                             </div>
                                             <div>
-                                                <h4 className="text-lg font-semibold text-white">Scanning Event Photos...</h4>
+                                                <h4 className="text-base sm:text-lg font-semibold text-white">Scanning Event Photos...</h4>
                                                 <p className="text-xs text-neutral-400 mt-1">
                                                     Extracting facial embeddings and matching photos with AI
                                                 </p>
@@ -933,21 +1032,22 @@ export default function EventGalleryClient() {
                                                 onUserMediaError={() => {
                                                     setUseWebcam(false);
                                                     toast.info("Camera not available. Switched to file upload.");
+                                                    trackEvent("camera_permission_denied", { event: slug });
                                                 }}
                                             />
                                             <Button
                                                 type="button"
                                                 onClick={captureSelfie}
-                                                className="absolute bottom-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-full px-6 shadow-xl border border-white/20"
+                                                className="absolute bottom-3 sm:bottom-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-full px-5 sm:px-6 text-xs sm:text-sm shadow-xl border border-white/20"
                                             >
-                                                <Camera className="w-4 h-4 mr-2" /> Take Photo
+                                                <Camera className="w-4 h-4 mr-1.5 sm:mr-2" /> Take Photo
                                             </Button>
                                         </div>
                                     ) : (
-                                        <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-neutral-900 transition-colors p-6">
-                                            <Upload className="w-10 h-10 text-neutral-400 mb-2" />
-                                            <span className="text-sm font-medium text-white">Click to upload a selfie photo</span>
-                                            <span className="text-xs text-neutral-500 mt-1">JPG, PNG or WEBP</span>
+                                        <label className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-neutral-900 transition-colors p-4 sm:p-6 text-center">
+                                            <Upload className="w-8 h-8 sm:w-10 sm:h-10 text-neutral-400 mb-2" />
+                                            <span className="text-xs sm:text-sm font-medium text-white">Click to upload a selfie photo</span>
+                                            <span className="text-[11px] text-neutral-500 mt-0.5">JPG, PNG or WEBP</span>
                                             <input
                                                 type="file"
                                                 accept="image/*"
@@ -963,7 +1063,11 @@ export default function EventGalleryClient() {
                                     <div className="flex justify-center">
                                         <button
                                             type="button"
-                                            onClick={() => setUseWebcam(!useWebcam)}
+                                            onClick={() => {
+                                                const nextMode = !useWebcam;
+                                                setUseWebcam(nextMode);
+                                                trackEvent("camera_mode_selected", { mode: nextMode ? "live_camera" : "file_upload" });
+                                            }}
                                             className="text-xs text-indigo-500 hover:text-indigo-600 font-medium underline underline-offset-4"
                                         >
                                             {useWebcam ? "Or upload a photo from device" : "Or use live camera"}
@@ -973,8 +1077,8 @@ export default function EventGalleryClient() {
 
                                 {/* Guest Name & Email Input */}
                                 {!searchingAI && (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                                        <div className="space-y-1.5">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 pt-1">
+                                        <div className="space-y-1">
                                             <Label htmlFor="guestName" className="text-xs font-medium">
                                                 Your Name *
                                             </Label>
@@ -984,10 +1088,10 @@ export default function EventGalleryClient() {
                                                 value={guestName}
                                                 onChange={(e) => setGuestName(e.target.value)}
                                                 required
-                                                className="h-10"
+                                                className="h-9 sm:h-10 text-sm"
                                             />
                                         </div>
-                                        <div className="space-y-1.5">
+                                        <div className="space-y-1">
                                             <Label htmlFor="guestEmail" className="text-xs font-medium text-muted-foreground">
                                                 Email (Optional)
                                             </Label>
@@ -997,7 +1101,7 @@ export default function EventGalleryClient() {
                                                 placeholder="sarah@example.com"
                                                 value={guestEmail}
                                                 onChange={(e) => setGuestEmail(e.target.value)}
-                                                className="h-10"
+                                                className="h-9 sm:h-10 text-sm"
                                             />
                                         </div>
                                     </div>
@@ -1005,11 +1109,11 @@ export default function EventGalleryClient() {
                             </CardContent>
 
                             {!searchingAI && (
-                                <CardFooter className="pt-2">
+                                <CardFooter className="pt-2 pb-4 sm:pb-6 px-4 sm:px-6 shrink-0">
                                     <Button
                                         type="submit"
                                         disabled={!capturedSelfie || !guestName.trim()}
-                                        className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 font-semibold rounded-xl"
+                                        className="w-full h-10 sm:h-11 bg-indigo-600 hover:bg-indigo-700 font-semibold rounded-xl text-sm"
                                     >
                                         <Sparkles className="w-4 h-4 mr-2" /> Start AI Face Search
                                     </Button>

@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import io
 import zipfile
+from PIL import Image
 from app.services.db import db
 from app.services.drive_service import drive_service
 from app.services.face_service import face_service
@@ -21,9 +22,13 @@ settings = get_settings()
 
 os.makedirs(settings.GUEST_SELFIES_DIR, exist_ok=True)
 
+# Concurrency locks to protect CPU and RAM
+selfie_processing_lock = asyncio.Lock()
+guest_zip_lock = asyncio.Lock()
 
-async def process_guest_request(request_id: str, event_slug: str, name: str,
-                                email: str, selfie_path: str):
+
+async def _process_guest_request_internal(request_id: str, event_slug: str, name: str,
+                                          email: str, selfie_path: str):
     try:
         # 1. Extract face embedding from guest selfie
         faces = await asyncio.to_thread(face_service.get_embeddings, selfie_path)
@@ -110,6 +115,12 @@ async def process_guest_request(request_id: str, event_slug: str, name: str,
         await db.execute(
             "UPDATE guests SET status = ?, error = ? WHERE id = ?",
             ("error", str(e), request_id))
+
+
+async def process_guest_request(request_id: str, event_slug: str, name: str,
+                                email: str, selfie_path: str):
+    async with selfie_processing_lock:
+        await _process_guest_request_internal(request_id, event_slug, name, email, selfie_path)
 
 
 @router.post("/request")
@@ -335,8 +346,7 @@ async def get_guest_matches(request_id: str, page: int = 1, limit: int = 50):
     }
 
 
-@router.get("/{request_id}/download-zip")
-async def download_guest_zip(request_id: str):
+async def _generate_guest_zip(request_id: str):
     row = await db.fetch_one("SELECT * FROM guests WHERE id = ?", (request_id,))
     if not row:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -346,38 +356,66 @@ async def download_guest_zip(request_id: str):
         raise HTTPException(status_code=400, detail="No photos to download")
 
     zip_buffer = io.BytesIO()
-
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         placeholders = ",".join(["?"] * len(photo_ids))
         photo_rows = await db.fetch_all(
             f"SELECT * FROM photos WHERE id IN ({placeholders})", photo_ids)
 
         for p in photo_rows:
+            p_id = p["id"]
+            raw_name = p.get("original_file_name") or f"{p_id}.jpg"
+            base_name, _ = os.path.splitext(raw_name)
+            jpeg_filename = f"{base_name}.jpg"
+
+            # 1. Check local original
             local_path = None
-            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp']:
-                path = os.path.join(settings.UPLOAD_ROOT, f"{p['id']}.{ext}")
+            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG']:
+                path = os.path.join(settings.UPLOAD_ROOT, f"{p_id}.{ext}")
                 if os.path.exists(path):
                     local_path = path
                     break
 
             if local_path:
-                zip_file.write(local_path,
-                               p.get("original_file_name", f"{p['id']}.jpg"))
-            elif p.get("drive_file_id"):
+                zip_file.write(local_path, raw_name)
+                continue
+
+            # 2. Check 2K local preview -> convert to universal JPEG
+            preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{p_id}.webp")
+            if os.path.exists(preview_path):
+                try:
+                    with Image.open(preview_path) as img:
+                        if img.mode != "RGB":
+                            img = img.convert("RGB")
+                        buf = io.BytesIO()
+                        img.save(buf, format="JPEG", quality=88)
+                        zip_file.writestr(jpeg_filename, buf.getvalue())
+                    continue
+                except Exception as e:
+                    print(f"Zip preview convert error for {p_id}: {e}")
+
+            # 3. Fallback to Google Drive if needed
+            if p.get("drive_file_id"):
                 try:
                     content, filename = await drive_service.download_file(
                         p["drive_file_id"])
                     if content:
                         zip_file.writestr(filename, content)
                 except Exception as e:
-                    print(f"Zip inclusion error for {p['id']}: {e}")
+                    print(f"Zip inclusion error for {p_id}: {e}")
 
     zip_data = zip_buffer.getvalue()
+    safe_name = "".join(c for c in (row.get('name') or 'guest') if c.isalnum() or c in (' ', '_', '-')).strip()
     return Response(
         content=zip_data,
         media_type="application/x-zip-compressed",
         headers={
-            "Content-Disposition": f"attachment; filename={row['name']}_photos.zip",
+            "Content-Disposition": f"attachment; filename={safe_name}_photos.zip",
             "Content-Length": str(len(zip_data))
         })
+
+
+@router.get("/{request_id}/download-zip")
+async def download_guest_zip(request_id: str):
+    async with guest_zip_lock:
+        return await _generate_guest_zip(request_id)
 

@@ -22,6 +22,12 @@ settings = get_settings()
 
 os.makedirs(settings.UPLOAD_ROOT, exist_ok=True)
 os.makedirs(settings.THUMBNAIL_ROOT, exist_ok=True)
+os.makedirs(settings.PREVIEWS_ROOT, exist_ok=True)
+
+# In-memory lock to prevent concurrent duplicate sync tasks for the same event
+active_sync_events = set()
+# Concurrency lock to serialize in-memory ZIP generations and protect RAM
+bulk_zip_lock = asyncio.Lock()
 
 
 def format_photo(row):
@@ -163,6 +169,10 @@ async def upload_photos(background_tasks: BackgroundTasks,
 
 
 async def run_sync_task(event_id: str):
+    if event_id in active_sync_events:
+        print(f"Sync task already running for event: {event_id}, ignoring duplicate request.")
+        return
+    active_sync_events.add(event_id)
     try:
         row = await db.fetch_one("SELECT * FROM events WHERE id = ?",
                                  (event_id, ))
@@ -218,16 +228,6 @@ async def run_sync_task(event_id: str):
                             pass
                 await db.execute("DELETE FROM photos WHERE id = ?", (p_id,))
                 pruned_count += 1
-            else:
-                # Photo is still on Drive: ensure any leftover local original from old syncs is purged
-                for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
-                    old_orig = os.path.join(settings.UPLOAD_ROOT, f"{p_id}.{ext}")
-                    if os.path.exists(old_orig):
-                        try:
-                            os.remove(old_orig)
-                        except Exception:
-                            pass
-
         if pruned_count > 0:
             print(f"Successfully pruned {pruned_count} deleted photos from event")
 
@@ -277,7 +277,7 @@ async def run_sync_task(event_id: str):
             inserted_items.append((photo_id, original_path, f))
 
         # Ephemeral download and processing with configurable concurrency
-        concurrency = max(1, getattr(settings, "SYNC_CONCURRENCY", 4))
+        concurrency = max(1, int(os.getenv("SYNC_CONCURRENCY", getattr(settings, "SYNC_CONCURRENCY", 4))))
         semaphore = asyncio.Semaphore(concurrency)
         all_to_process = pending_photos + inserted_items
         total_to_process = len(all_to_process)
@@ -300,6 +300,7 @@ async def run_sync_task(event_id: str):
                             ("error", photo_id))
                         return
 
+                    os.makedirs(os.path.dirname(original_path), exist_ok=True)
                     with open(original_path, "wb") as buffer:
                         buffer.write(content)
 
@@ -310,9 +311,12 @@ async def run_sync_task(event_id: str):
                                         filename,
                                         drive_file_id=f["id"])
                 except Exception as loop_err:
-                    print(f"Error processing synced photo {f['name']}: {loop_err}")
-                    await db.execute("UPDATE photos SET status = ? WHERE id = ?",
-                                     ("error", photo_id))
+                    print(f"Error processing synced photo {f.get('name', photo_id)}: {loop_err}")
+                    try:
+                        await db.execute("UPDATE photos SET status = ? WHERE id = ?",
+                                         ("error", photo_id))
+                    except Exception:
+                        pass
                 finally:
                     # Guarantee local temp file is removed
                     if os.path.exists(original_path):
@@ -323,7 +327,7 @@ async def run_sync_task(event_id: str):
                     await asyncio.sleep(0.01)
 
         if all_to_process:
-            await asyncio.gather(*(process_sync_item(item) for item in all_to_process))
+            await asyncio.gather(*(process_sync_item(item) for item in all_to_process), return_exceptions=True)
 
         await db.execute(
             """
@@ -334,18 +338,26 @@ async def run_sync_task(event_id: str):
         print(f"Sync task fatal error: {e}")
         await db.execute("UPDATE events SET sync_status = ? WHERE id = ?",
                          ("error", event_id))
+    finally:
+        active_sync_events.discard(event_id)
 
 
 @router.post("/sync/{event_id}")
 async def start_sync(event_id: str, background_tasks: BackgroundTasks):
     row = await db.fetch_one(
-        "SELECT drive_folder_url FROM events WHERE id = ?", (event_id, ))
+        "SELECT drive_folder_url, sync_status FROM events WHERE id = ?", (event_id, ))
     if not row:
         raise HTTPException(status_code=404, detail="Event not found")
 
     if not row["drive_folder_url"]:
         raise HTTPException(status_code=400,
                             detail="Drive folder URL not configured")
+
+    if event_id in active_sync_events or row.get("sync_status") == "syncing":
+        return {
+            "message": "Sync is already in progress for this event",
+            "sync_status": "syncing"
+        }
 
     background_tasks.add_task(run_sync_task, event_id)
     return {"message": "Sync started in background"}
@@ -740,26 +752,67 @@ async def get_thumbnail(photo_id: str):
 
 @router.get("/download/{photo_id}")
 async def download_photo(photo_id: str):
-    row = await db.fetch_one("SELECT drive_file_id FROM photos WHERE id = ?",
-                             (photo_id, ))
-    if not row or not row["drive_file_id"]:
+    row = await db.fetch_one("SELECT * FROM photos WHERE id = ?", (photo_id,))
+    if not row:
         raise HTTPException(status_code=404, detail="Photo not found")
 
-    try:
-        content, filename = await drive_service.download_file(
-            row["drive_file_id"])
-        if content is None:
-            raise HTTPException(status_code=500,
-                                detail="Failed to download from Drive")
+    raw_name = row.get("original_file_name") or f"{photo_id}.jpg"
+    base_name, _ = os.path.splitext(raw_name)
+    jpeg_filename = f"{base_name}.jpg"
 
-        return StreamingResponse(io.BytesIO(content),
-                                 media_type="application/octet-stream",
-                                 headers={
-                                     "Content-Disposition":
-                                     f"attachment; filename={filename}"
-                                 })
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # 1. Check local master original file in UPLOAD_ROOT
+    for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+        local_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+        if os.path.exists(local_path):
+            return FileResponse(
+                local_path,
+                filename=raw_name,
+                content_disposition_type="attachment"
+            )
+
+    # 2. Check 2K local preview and convert to universal JPEG on the fly (~8ms)
+    preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
+    if os.path.exists(preview_path):
+        try:
+            with Image.open(preview_path) as img:
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=90, optimize=True)
+                jpeg_bytes = buf.getvalue()
+            return Response(
+                content=jpeg_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{jpeg_filename}"',
+                    "Content-Length": str(len(jpeg_bytes))
+                }
+            )
+        except Exception as e:
+            print(f"Error converting preview to JPEG for {photo_id}: {e}")
+
+    # 3. Fallback to Google Drive if Drive ID exists
+    drive_file_id = row.get("drive_file_id")
+    if drive_file_id:
+        try:
+            content, filename = await drive_service.download_file(drive_file_id)
+            if content:
+                ext = filename.split(".")[-1] if "." in filename else "jpg"
+                cache_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+                with open(cache_path, "wb") as f:
+                    f.write(content)
+                return Response(
+                    content=content,
+                    media_type="application/octet-stream",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{filename}"',
+                        "Content-Length": str(len(content))
+                    }
+                )
+        except Exception as e:
+            print(f"Drive download error for {photo_id}: {e}")
+
+    raise HTTPException(status_code=404, detail="Photo file not found")
 
 
 class BulkDownloadRequest(BaseModel):
@@ -767,9 +820,8 @@ class BulkDownloadRequest(BaseModel):
     zip_name: Optional[str] = "photos.zip"
 
 
-@router.post("/download-zip")
-async def download_photos_bulk_zip(req: BulkDownloadRequest):
-    """Streams a ZIP archive containing multiple selected photos in master full resolution"""
+async def _generate_bulk_zip(req: BulkDownloadRequest):
+    """Streams a ZIP archive containing selected photos in high-resolution universal JPEG"""
     if not req.photo_ids:
         raise HTTPException(status_code=400, detail="No photos selected for download")
 
@@ -780,22 +832,45 @@ async def download_photos_bulk_zip(req: BulkDownloadRequest):
             f"SELECT * FROM photos WHERE id IN ({placeholders})", req.photo_ids
         )
         for p in photo_rows:
+            p_id = p["id"]
+            raw_name = p.get("original_file_name") or f"{p_id}.jpg"
+            base_name, _ = os.path.splitext(raw_name)
+            jpeg_filename = f"{base_name}.jpg"
+
+            # 1. Check local original
             local_path = None
-            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
-                path = os.path.join(settings.UPLOAD_ROOT, f"{p['id']}.{ext}")
+            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG']:
+                path = os.path.join(settings.UPLOAD_ROOT, f"{p_id}.{ext}")
                 if os.path.exists(path):
                     local_path = path
                     break
 
             if local_path:
-                zip_file.write(local_path, p.get("original_file_name", f"{p['id']}.jpg"))
-            elif p.get("drive_file_id"):
+                zip_file.write(local_path, raw_name)
+                continue
+
+            # 2. Check 2K local preview -> convert to universal JPEG
+            preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{p_id}.webp")
+            if os.path.exists(preview_path):
+                try:
+                    with Image.open(preview_path) as img:
+                        if img.mode != "RGB":
+                            img = img.convert("RGB")
+                        buf = io.BytesIO()
+                        img.save(buf, format="JPEG", quality=88)
+                        zip_file.writestr(jpeg_filename, buf.getvalue())
+                    continue
+                except Exception as e:
+                    print(f"Zip preview convert error for {p_id}: {e}")
+
+            # 3. Fallback to Google Drive if needed
+            if p.get("drive_file_id"):
                 try:
                     content, filename = await drive_service.download_file(p["drive_file_id"])
                     if content:
                         zip_file.writestr(filename, content)
                 except Exception as e:
-                    print(f"Zip inclusion error for photo {p['id']}: {e}")
+                    print(f"Zip inclusion error for photo {p_id}: {e}")
 
     zip_data = zip_buffer.getvalue()
     clean_filename = req.zip_name if req.zip_name.endswith(".zip") else f"{req.zip_name}.zip"
@@ -807,3 +882,10 @@ async def download_photos_bulk_zip(req: BulkDownloadRequest):
             "Content-Length": str(len(zip_data))
         }
     )
+
+
+@router.post("/download-zip")
+async def download_photos_bulk_zip(req: BulkDownloadRequest):
+    async with bulk_zip_lock:
+        return await _generate_bulk_zip(req)
+

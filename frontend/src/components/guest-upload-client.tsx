@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Camera, Upload, CheckCircle2, Loader2, RefreshCw, XCircle, Lock, UserPlus, ArrowRight, Trash2 } from "lucide-react";
+import { Camera, Upload, CheckCircle2, Loader2, RefreshCw, XCircle, Lock, UserPlus, ArrowRight, Trash2, ShieldCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import Webcam from "react-webcam";
 import { compressImage } from "@/lib/image-compressor";
@@ -25,6 +25,7 @@ export default function GuestUploadClient() {
     const [requestId, setRequestId] = useState<string | null>(null);
     const [polling, setPolling] = useState(false);
     const [matchCount, setMatchCount] = useState(0);
+    const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
     const [eventInfo, setEventInfo] = useState<{ name: string; is_protected: boolean } | null>(null);
     const [secretCode, setSecretCode] = useState("");
@@ -156,7 +157,14 @@ export default function GuestUploadClient() {
     // Polling for guest request status
     useEffect(() => {
         let interval: NodeJS.Timeout;
+        let elapsedTimer: NodeJS.Timeout;
+
         if (polling && requestId) {
+            setElapsedSeconds(0);
+            elapsedTimer = setInterval(() => {
+                setElapsedSeconds((prev) => prev + 1);
+            }, 1000);
+
             interval = setInterval(async () => {
                 try {
                     const apiUrl = process.env.NEXT_PUBLIC_API_URL;
@@ -193,8 +201,13 @@ export default function GuestUploadClient() {
                     console.error("Polling error:", e);
                 }
             }, 3000);
+        } else {
+            setElapsedSeconds(0);
         }
-        return () => clearInterval(interval);
+        return () => {
+            clearInterval(interval);
+            clearInterval(elapsedTimer);
+        };
     }, [polling, requestId, submittingGuest, slug]);
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -358,6 +371,90 @@ export default function GuestUploadClient() {
                             </Button>
                         </CardFooter>
                     </form>
+                </Card>
+            </div>
+        );
+    }
+
+    if (polling && requestId) {
+        return (
+            <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-100/30 via-background to-blue-100/20 text-foreground transition-colors duration-300">
+                <Card className="w-full max-w-md border border-border shadow-2xl bg-card/95 backdrop-blur-xl rounded-3xl overflow-hidden text-center p-6 sm:p-8 animate-in fade-in zoom-in-95 duration-500">
+                    {/* Live System Status Badge */}
+                    <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 text-xs font-semibold mx-auto mb-6">
+                        <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                        System Active &bull; Processing Queue
+                    </div>
+
+                    {/* Animated Scanning Avatar */}
+                    <div className="relative w-28 h-28 mx-auto mb-6">
+                        {/* Outer rotating pulse ring */}
+                        <div className="absolute inset-0 rounded-full border-2 border-dashed border-indigo-500 animate-[spin_8s_linear_infinite]" />
+                        <div className="absolute -inset-2 rounded-full border border-indigo-400/30 animate-ping opacity-25" />
+
+                        {/* User selfie or placeholder */}
+                        <div className="relative w-full h-full rounded-full overflow-hidden border-2 border-indigo-500/50 shadow-lg bg-muted flex items-center justify-center">
+                            {capturedImage ? (
+                                /* eslint-disable-next-line @next/next/no-img-element */
+                                <img
+                                    src={capturedImage}
+                                    alt="Your Selfie"
+                                    className="w-full h-full object-cover scale-x-[-1]"
+                                />
+                            ) : (
+                                <Camera className="w-10 h-10 text-indigo-500 animate-pulse" />
+                            )}
+
+                            {/* Scanline laser bar */}
+                            <div className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_8px_#22d3ee] animate-bounce" />
+                        </div>
+                    </div>
+
+                    {/* Dynamic Stage Heading */}
+                    <CardTitle className="text-2xl font-bold tracking-tight text-foreground">
+                        {elapsedSeconds < 4 && "Analyzing Your Selfie..."}
+                        {elapsedSeconds >= 4 && elapsedSeconds < 9 && "Searching Event Gallery..."}
+                        {elapsedSeconds >= 9 && elapsedSeconds < 16 && "Matching Ceremony & Crowd..."}
+                        {elapsedSeconds >= 16 && "Hold On, You're In Queue!"}
+                    </CardTitle>
+
+                    {/* Reassuring Explanation */}
+                    <CardDescription className="text-sm text-muted-foreground mt-2 max-w-sm mx-auto leading-relaxed">
+                        {elapsedSeconds < 16
+                            ? "Our AI is matching your facial features across all uploaded event photos. This only takes a moment."
+                            : "Multiple guests are scanning at the exact same moment. The website is working normally — your personal gallery will open automatically as soon as it's ready!"}
+                    </CardDescription>
+
+                    {/* Progress indicator */}
+                    <div className="mt-6 space-y-2">
+                        <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                            <div
+                                className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 h-full rounded-full animate-pulse transition-all duration-1000"
+                                style={{
+                                    width: elapsedSeconds < 4 ? "30%" : elapsedSeconds < 9 ? "60%" : elapsedSeconds < 16 ? "85%" : "95%"
+                                }}
+                            />
+                        </div>
+                        <div className="flex justify-between items-center text-xs text-muted-foreground font-medium px-1">
+                            <span className="flex items-center gap-1">
+                                <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
+                                {elapsedSeconds < 16 ? "Matching in progress" : "Waiting for next slot"}
+                            </span>
+                            <span>{elapsedSeconds}s elapsed</span>
+                        </div>
+                    </div>
+
+                    {/* Explicit "Do not refresh" reassurance note */}
+                    <div className="mt-6 p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 text-left flex items-start gap-3">
+                        <ShieldCheck className="w-5 h-5 text-indigo-600 dark:text-indigo-400 flex-shrink-0 mt-0.5" />
+                        <div className="text-xs text-indigo-950 dark:text-indigo-200 leading-snug">
+                            <span className="font-bold block text-indigo-900 dark:text-indigo-100 mb-0.5">Please keep this tab open</span>
+                            Your request is securely queued on the server. Do not refresh; your photos will appear automatically.
+                        </div>
+                    </div>
                 </Card>
             </div>
         );
@@ -572,6 +669,10 @@ export default function GuestUploadClient() {
                                             const f = e.target.files?.[0] || null;
                                             setFile(f);
                                             setFileName(f?.name || null);
+                                            if (f) {
+                                                const previewUrl = URL.createObjectURL(f);
+                                                setCapturedImage(previewUrl);
+                                            }
                                         }}
                                     />
                                     {fileName ? (

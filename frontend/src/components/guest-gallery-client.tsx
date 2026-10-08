@@ -91,11 +91,13 @@ export default function GuestGalleryClient() {
             a.click();
             a.remove();
             window.URL.revokeObjectURL(url);
-            toast.success(`Downloaded ${count} photos in ZIP!`, { id: toastId });
+            toast.dismiss(toastId);
+            toast.success(`Downloaded ${count} photos in ZIP!`);
             setSelectedPhotoIds(new Set());
         } catch (err) {
             console.error("Bulk download error:", err);
-            toast.error("Failed to download selected photos", { id: toastId });
+            toast.dismiss(toastId);
+            toast.error("Failed to download selected photos");
         } finally {
             setDownloadingSelectedZip(false);
         }
@@ -111,7 +113,7 @@ export default function GuestGalleryClient() {
     const fetchMatches = useCallback(async (pageNum: number) => {
         try {
             setLoading(true);
-            const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=${pageNum}&limit=50`);
+            const res = await fetch(`${API_URL}/guests/${guestId}/matches?page=${pageNum}&limit=200`);
             if (!res.ok) throw new Error("Failed to load your gallery.");
             const result = await res.json();
 
@@ -196,6 +198,11 @@ export default function GuestGalleryClient() {
         setTotalBytes(0);
         setDownloadStartTime(Date.now());
 
+        const toastId = toast.loading("Packaging your photos into ZIP...", {
+            description: "Generating your archive on server. If another download is in progress, your request is queued automatically. Please keep this tab open!",
+            duration: 90000,
+        });
+
         try {
             const res = await fetch(`${API_URL}/guests/${guestId}/download-zip`);
             if (!res.ok) throw new Error("ZIP creation failed");
@@ -231,9 +238,11 @@ export default function GuestGalleryClient() {
             a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
+            toast.dismiss(toastId);
             toast.success("Download started!");
         } catch (error) {
             console.error("ZIP Download error:", error);
+            toast.dismiss(toastId);
             toast.error("Failed to create ZIP file. Please try downloading individual photos.");
         } finally {
             setDownloadingZip(false);
@@ -388,14 +397,16 @@ export default function GuestGalleryClient() {
                                     <Archive className="w-5 h-5 animate-pulse" />
                                 </div>
                                 <div>
-                                    <h4 className="font-bold text-slate-900 dark:text-white leading-tight">Downloading Photos</h4>
+                                    <h4 className="font-bold text-slate-900 dark:text-white leading-tight">
+                                        {bytesLoaded > 0 ? "Downloading Photos" : "Preparing Your ZIP Package"}
+                                    </h4>
                                     <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
                                         {bytesLoaded > 0 ? (
                                             <>
                                                 {(bytesLoaded / 1024 / 1024).toFixed(1)}MB
                                                 {totalBytes > 0 && ` of ${(totalBytes / 1024 / 1024).toFixed(1)}MB`}
                                             </>
-                                        ) : "Preparing files..."}
+                                        ) : "Generating on server. If another download is active, you are queued automatically..."}
                                     </p>
                                 </div>
                             </div>
@@ -518,7 +529,7 @@ export default function GuestGalleryClient() {
                             size="sm"
                             onClick={handleDownloadSelectedZip}
                             disabled={downloadingSelectedZip}
-                            className="h-8 px-4 text-xs font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-full shadow-lg gap-1.5"
+                            className="h-8 px-4 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-full shadow-md gap-1.5 active:scale-[0.98] transition-all"
                         >
                             {downloadingSelectedZip ? (
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
