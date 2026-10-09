@@ -2,8 +2,8 @@ services:
   backend:
     build: ./backend
     init: true
-    container_name: ${BACKEND_CONTAINER_NAME:-picshare-backend}
-    hostname: ${BACKEND_CONTAINER_NAME:-picshare-backend}
+    container_name: ${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}
+    hostname: ${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}
     volumes:
       - ./data:/app/data:z
       - ${LOCAL_PHOTOS_DIR:-./photos}:/photos:ro
@@ -22,11 +22,11 @@ services:
       context: ./frontend
       args:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
-        - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-picshare-backend:8000}
+        - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}:8000}
         - NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}
         - NEXT_PUBLIC_UMAMI_SCRIPT_URL=${NEXT_PUBLIC_UMAMI_SCRIPT_URL:-https://cloud.umami.is/script.js}
     init: true
-    container_name: ${FRONTEND_CONTAINER_NAME:-picshare-frontend}
+    container_name: ${FRONTEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-frontend}
     ports:
       - "${FRONTEND_PORT:-3005}:3000"
     depends_on:
@@ -34,7 +34,7 @@ services:
     restart: "no"
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
-      - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-picshare-backend:8000}
+      - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}:8000}
       - NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}
       - NEXT_PUBLIC_UMAMI_SCRIPT_URL=${NEXT_PUBLIC_UMAMI_SCRIPT_URL:-https://cloud.umami.is/script.js}
 # Define named volumes if you prefer, but host-binding is simpler for VPS deployments

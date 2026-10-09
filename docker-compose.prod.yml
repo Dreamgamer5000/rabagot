@@ -1,9 +1,9 @@
 services:
   backend:
-    image: ${GCP_REGION:-us-west1}-docker.pkg.dev/${GCP_PROJECT_ID:-your-gcp-project-id}/${GCP_REPO_NAME:-picshare-repo}/${BACKEND_CONTAINER_NAME:-picshare-backend}:${IMAGE_TAG:-latest}
+    image: ${GCP_REGION:-us-west1}-docker.pkg.dev/${GCP_PROJECT_ID:-your-gcp-project-id}/${GCP_REPO_NAME:-picshare-repo}/${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}:${IMAGE_TAG:-latest}
     init: true
-    container_name: ${BACKEND_CONTAINER_NAME:-picshare-backend}
-    hostname: ${BACKEND_CONTAINER_NAME:-picshare-backend}
+    container_name: ${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}
+    hostname: ${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}
     restart: always
     volumes:
       - ./data:/app/data:z
@@ -19,9 +19,9 @@ services:
       - web_net
 
   frontend:
-    image: ${GCP_REGION:-us-west1}-docker.pkg.dev/${GCP_PROJECT_ID:-your-gcp-project-id}/${GCP_REPO_NAME:-picshare-repo}/${FRONTEND_CONTAINER_NAME:-picshare-frontend}:${IMAGE_TAG:-latest}
+    image: ${GCP_REGION:-us-west1}-docker.pkg.dev/${GCP_PROJECT_ID:-your-gcp-project-id}/${GCP_REPO_NAME:-picshare-repo}/${FRONTEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-frontend}:${IMAGE_TAG:-latest}
     init: true
-    container_name: ${FRONTEND_CONTAINER_NAME:-picshare-frontend}
+    container_name: ${FRONTEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-frontend}
     restart: always
     expose:
       - "3000"
@@ -30,7 +30,7 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
-      - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-picshare-backend:8000}
+      - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-${BACKEND_CONTAINER_NAME:-${COMPOSE_PROJECT_NAME:-picshare}-backend}:8000}
     env_file:
       - .env
     networks:

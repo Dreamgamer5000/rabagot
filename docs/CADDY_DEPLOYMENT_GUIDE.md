@@ -69,12 +69,10 @@ Edit `.env` and set unique instance parameters:
 
 ```bash
 # --- Multi-Instance & Docker Container Naming ---
+# Simply set COMPOSE_PROJECT_NAME!
+# Backend container (farewell-backend), frontend container (farewell-frontend),
+# and internal DNS (farewell-backend:8000) are all derived automatically.
 COMPOSE_PROJECT_NAME=farewell
-BACKEND_CONTAINER_NAME=farewell-backend
-FRONTEND_CONTAINER_NAME=farewell-frontend
-
-# CRITICAL: BACKEND_HOSTNAME must match BACKEND_CONTAINER_NAME:8000
-BACKEND_HOSTNAME=farewell-backend:8000
 
 # Host Ports (must be unique per instance if exposing to host)
 FRONTEND_PORT=3006
@@ -93,9 +91,9 @@ LOCAL_PHOTOS_DIR=/photos/farewell
 STORAGE_DIR=/app/data
 ```
 
-> [!IMPORTANT]
-> **Crucial Rule for `BACKEND_HOSTNAME`**:  
-> The Next.js frontend calls the backend internally over the Docker network. If you change `BACKEND_CONTAINER_NAME` to `farewell-backend`, you **must** set `BACKEND_HOSTNAME=farewell-backend:8000`.
+> [!TIP]
+> **Automatic Name Derivation**:  
+> Setting `COMPOSE_PROJECT_NAME=farewell` automatically configures the containers as `farewell-backend` and `farewell-frontend`, and configures the internal Next.js backend proxy to `farewell-backend:8000`. You no longer need to manually configure `BACKEND_HOSTNAME` or container names unless you want custom overrides.
 
 ---
 
