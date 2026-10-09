@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Lock, Unlock, Eye, EyeOff, Sparkles, Cloud, Folder, ArrowUp } from "lucide-react";
+import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Lock, Unlock, Eye, EyeOff, Sparkles, Cloud, Folder, ArrowUp, Square } from "lucide-react";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -124,8 +124,8 @@ const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }
 
                     // Stop polling if fully complete
 
-                    const syncDone = data.sync_status === "completed" || data.sync_status === "idle";
-                    const processingDone = data.pending === 0;
+                    const syncDone = data.sync_status === "completed" || data.sync_status === "idle" || data.sync_status === "stopped";
+                    const processingDone = data.pending === 0 || data.sync_status === "stopped";
 
                     if (syncDone && processingDone && pollRef.current) {
                         clearInterval(pollRef.current);
@@ -164,13 +164,28 @@ const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }
             <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                 <span>Indexing Progress</span>
                 <span className="flex items-center gap-1">
-                    {status.sync_status === "syncing" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
-                    {status.progress >= 100 && status.sync_status !== "syncing" ? "Fully Indexed" : `${Math.round(status.progress)}%`}
+                    {status.sync_status === "syncing" && <Loader2 className="w-2.5 h-2.5 animate-spin text-indigo-500" />}
+                    {status.sync_status === "stopped" ? (
+                        <span className="text-amber-500 font-semibold flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Stopped ({Math.round(status.progress)}%)
+                        </span>
+                    ) : status.progress >= 100 && status.sync_status !== "syncing" ? (
+                        "Fully Indexed"
+                    ) : (
+                        `${Math.round(status.progress)}%`
+                    )}
                 </span>
             </div>
             <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
                 <div
-                    className={`h-full transition-all duration-500 rounded-full ${status.errors > 0 ? 'bg-amber-500' : 'bg-indigo-600 dark:bg-indigo-500'}`}
+                    className={`h-full transition-all duration-500 rounded-full ${
+                        status.sync_status === "stopped"
+                            ? "bg-amber-500"
+                            : status.errors > 0
+                            ? "bg-amber-500"
+                            : "bg-indigo-600 dark:bg-indigo-500"
+                    }`}
                     style={{ width: `${status.progress}%` }}
                 />
             </div>
@@ -338,6 +353,7 @@ export default function AdminDashboardClient() {
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
     const [syncing, setSyncing] = useState<Record<string, boolean>>({});
+    const [stoppingSync, setStoppingSync] = useState<Record<string, boolean>>({});
     const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
     const [driveUrl, setDriveUrl] = useState("");
     const [createStorageType, setCreateStorageType] = useState<"drive" | "local">("drive");
@@ -541,6 +557,32 @@ export default function AdminDashboardClient() {
             setTimeout(() => {
                 setSyncing(prev => ({ ...prev, [eventId]: false }));
             }, 2000);
+        }
+    };
+
+    const handleStopSync = async (eventId: string) => {
+        setStoppingSync(prev => ({ ...prev, [eventId]: true }));
+        const token = Cookies.get("admin_token");
+
+        try {
+            const response = await fetch(`${API_URL}/photos/sync/${eventId}/stop`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+
+            if (response.ok) {
+                toast.success("Force stopped photo sync");
+                setSyncing(prev => ({ ...prev, [eventId]: false }));
+                await fetchEvents();
+            } else {
+                const err = await response.json();
+                toast.error(err.detail || "Failed to stop sync");
+            }
+        } catch (error) {
+            console.error("Stop sync error:", error);
+            toast.error("Network error while stopping sync");
+        } finally {
+            setStoppingSync(prev => ({ ...prev, [eventId]: false }));
         }
     };
 
@@ -1344,26 +1386,37 @@ export default function AdminDashboardClient() {
                                 )}
 
                                 <div className="flex gap-2">
-                                    <Button
-                                        variant="default"
-                                        size="sm"
-                                        disabled={
-                                            syncing[event._id] ||
-                                            !(event.storage_type === "local" ? event.storage_path : event.drive_folder_url) ||
-                                            event.sync_status === "syncing"
-                                        }
-                                        onClick={() => handleSyncPhotos(event._id)}
-                                        className="h-9 flex-1 bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-100 dark:shadow-none border-none"
-                                    >
-                                        {syncing[event._id] || event.sync_status === "syncing" ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                        ) : (
-                                            <>
-                                                <RefreshCw className="w-3.5 h-3.5 mr-2" />
-                                                Sync Now
-                                            </>
-                                        )}
-                                    </Button>
+                                    {event.sync_status === "syncing" || syncing[event._id] ? (
+                                        <Button
+                                            variant="destructive"
+                                            size="sm"
+                                            disabled={stoppingSync[event._id]}
+                                            onClick={() => handleStopSync(event._id)}
+                                            className="h-9 flex-1 bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-200/50 dark:shadow-none border-none font-medium flex items-center justify-center gap-1.5 transition-all group/stop"
+                                            title="Force stop active sync and photo indexing"
+                                        >
+                                            {stoppingSync[event._id] ? (
+                                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            ) : (
+                                                <Square className="w-3.5 h-3.5 fill-current group-hover/stop:scale-110 transition-transform" />
+                                            )}
+                                            <span>Stop Sync</span>
+                                        </Button>
+                                    ) : (
+                                        <Button
+                                            variant="default"
+                                            size="sm"
+                                            disabled={
+                                                syncing[event._id] ||
+                                                !(event.storage_type === "local" ? event.storage_path : event.drive_folder_url)
+                                            }
+                                            onClick={() => handleSyncPhotos(event._id)}
+                                            className="h-9 flex-1 bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-100 dark:shadow-none border-none font-medium transition-all"
+                                        >
+                                            <RefreshCw className="w-3.5 h-3.5 mr-2" />
+                                            Sync Now
+                                        </Button>
+                                    )}
                                     <Button
                                         variant="ghost"
                                         size="sm"

@@ -232,3 +232,8 @@ docker exec -w /etc/caddy <caddy-container-name> caddy reload
 ### 3. Port already allocated (`bind: address already in use`)
 - **Cause**: Both instances are trying to bind the same host port (e.g. `3005` or `8000`).
 - **Fix**: Change `FRONTEND_PORT` (e.g. `3006`) and `BACKEND_PORT` (e.g. `8001`) in `.env`.
+
+### 4. Stuck or Runaway Indexing Sync
+- **UI Action**: Click the red **"Stop Sync"** button on the event card in the Admin Dashboard.
+- **API Action**: Send a POST request to `/api/photos/sync/{event_id}/stop` (or `/photos/sync/{event_id}/stop` on backend port 8000).
+- **Result**: Cancels the active worker coroutines, stops downloading, sets `sync_status` to `stopped`, and leaves already indexed photos intact so indexing can resume anytime.

@@ -27,6 +27,8 @@ os.makedirs(settings.PREVIEWS_ROOT, exist_ok=True)
 
 # In-memory lock to prevent concurrent duplicate sync tasks for the same event
 active_sync_events = set()
+active_sync_tasks: dict[str, asyncio.Task] = {}
+stop_sync_requested: set[str] = set()
 # Concurrency lock to serialize in-memory ZIP generations and protect RAM
 bulk_zip_lock = asyncio.Lock()
 
@@ -178,7 +180,14 @@ async def run_sync_task(event_id: str):
         print(f"Sync task already running for event: {event_id}, ignoring duplicate request.")
         return
     active_sync_events.add(event_id)
+    cur_task = asyncio.current_task()
+    if cur_task:
+        active_sync_tasks[event_id] = cur_task
+
     try:
+        if event_id in stop_sync_requested:
+            raise asyncio.CancelledError()
+
         row = await db.fetch_one("SELECT * FROM events WHERE id = ?",
                                  (event_id, ))
         if not row:
@@ -197,8 +206,14 @@ async def run_sync_task(event_id: str):
         provider = get_storage_provider(storage_type)
         print(f"Starting sync for event '{event.get('name')}' using {storage_type} provider at: {location}")
 
+        if event_id in stop_sync_requested:
+            raise asyncio.CancelledError()
+
         files_to_sync = await provider.list_photos(location)
         print(f"Found {len(files_to_sync)} files total")
+
+        if event_id in stop_sync_requested:
+            raise asyncio.CancelledError()
 
         active_file_ids = {f["id"] for f in files_to_sync}
 
@@ -209,6 +224,9 @@ async def run_sync_task(event_id: str):
         )
         pruned_count = 0
         for ep in existing_event_photos:
+            if event_id in stop_sync_requested:
+                raise asyncio.CancelledError()
+
             p_id = ep["id"]
             p_storage_type = (ep.get("storage_type") or "drive").lower().strip()
             check_id = ep.get("storage_path") if p_storage_type == "local" else ep.get("drive_file_id")
@@ -245,6 +263,9 @@ async def run_sync_task(event_id: str):
         new_files = []
         pending_photos = []
         for f in files_to_sync:
+            if event_id in stop_sync_requested:
+                raise asyncio.CancelledError()
+
             if storage_type == "local":
                 existing = await db.fetch_one(
                     "SELECT id, status, thumbnail_path, storage_path FROM photos WHERE event_id = ? AND storage_path = ?",
@@ -280,6 +301,9 @@ async def run_sync_task(event_id: str):
         # Pre-register all new photos
         inserted_items = []
         for f in new_files:
+            if event_id in stop_sync_requested:
+                raise asyncio.CancelledError()
+
             photo_id = str(uuid.uuid4())
             file_ext = f['name'].split(".")[-1] if "." in f['name'] else "jpg"
             if storage_type == "local":
@@ -308,13 +332,22 @@ async def run_sync_task(event_id: str):
         counter_lock = asyncio.Lock()
 
         async def process_sync_item(item):
+            if event_id in stop_sync_requested:
+                return
+
             nonlocal processed_count
             photo_id, orig_path, f = item
             async with semaphore:
+                if event_id in stop_sync_requested:
+                    return
+
                 async with counter_lock:
                     processed_count += 1
                     current_idx = processed_count
                 try:
+                    if event_id in stop_sync_requested:
+                        return
+
                     print(f"[{current_idx}/{total_to_process}] Indexing ({storage_type}): {f['name']} (parallel workers: {concurrency})")
                     if storage_type == "local":
                         # Local file is already on disk: zero network copy, zero temp files
@@ -374,17 +407,26 @@ async def run_sync_task(event_id: str):
         if all_to_process:
             await asyncio.gather(*(process_sync_item(item) for item in all_to_process), return_exceptions=True)
 
+        if event_id in stop_sync_requested:
+            raise asyncio.CancelledError()
+
         await db.execute(
             """
             UPDATE events SET sync_status = ?, last_sync_at = ? WHERE id = ?
         """, ("completed", datetime.utcnow().isoformat(), event_id))
         print(f"Sync completed successfully for event: {event_id}")
+    except asyncio.CancelledError:
+        print(f"Sync task for event {event_id} was force stopped.")
+        await db.execute("UPDATE events SET sync_status = ? WHERE id = ?",
+                         ("stopped", event_id))
     except Exception as e:
         print(f"Sync task fatal error: {e}")
         await db.execute("UPDATE events SET sync_status = ? WHERE id = ?",
                          ("error", event_id))
     finally:
         active_sync_events.discard(event_id)
+        active_sync_tasks.pop(event_id, None)
+        stop_sync_requested.discard(event_id)
 
 
 @router.post("/sync/{event_id}")
@@ -408,8 +450,34 @@ async def start_sync(event_id: str, background_tasks: BackgroundTasks):
             "sync_status": "syncing"
         }
 
-    background_tasks.add_task(run_sync_task, event_id)
+    stop_sync_requested.discard(event_id)
+    task = asyncio.create_task(run_sync_task(event_id))
+    active_sync_tasks[event_id] = task
     return {"message": "Sync started in background"}
+
+
+@router.post("/sync/{event_id}/stop")
+@router.post("/stop-sync/{event_id}")
+async def stop_sync(event_id: str):
+    row = await db.fetch_one("SELECT id, name, sync_status FROM events WHERE id = ?", (event_id, ))
+    if not row:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    stop_sync_requested.add(event_id)
+    task = active_sync_tasks.get(event_id)
+    if task and not task.done():
+        task.cancel()
+
+    # Always forcefully update DB to 'stopped' so even zombie/crashed syncs clear immediately
+    await db.execute(
+        "UPDATE events SET sync_status = ? WHERE id = ?",
+        ("stopped", event_id)
+    )
+    active_sync_events.discard(event_id)
+    active_sync_tasks.pop(event_id, None)
+
+    print(f"Force stopped sync for event {event_id} ({row.get('name')})")
+    return {"message": "Sync stopped successfully", "sync_status": "stopped"}
 
 
 @router.post("/retry-errors/{event_id}")
