@@ -31,6 +31,7 @@ class Database:
                 storage_type TEXT DEFAULT 'drive',
                 storage_path TEXT,
                 secret_code TEXT,
+                allow_public_gallery INTEGER DEFAULT 1,
                 sync_status TEXT DEFAULT 'idle',
                 last_sync_at TEXT,
                 created_at TEXT NOT NULL
@@ -92,6 +93,8 @@ class Database:
                 await self.connection.execute("ALTER TABLE events ADD COLUMN storage_type TEXT DEFAULT 'drive'")
             if "storage_path" not in event_cols:
                 await self.connection.execute("ALTER TABLE events ADD COLUMN storage_path TEXT")
+            if "allow_public_gallery" not in event_cols:
+                await self.connection.execute("ALTER TABLE events ADD COLUMN allow_public_gallery INTEGER DEFAULT 1")
 
         async with self.connection.execute("PRAGMA table_info(photos)") as cursor:
             photo_cols = [row[1] for row in await cursor.fetchall()]

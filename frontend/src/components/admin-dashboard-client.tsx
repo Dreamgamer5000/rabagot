@@ -21,6 +21,7 @@ interface Event {
     storage_path?: string;
     drive_folder_url?: string;
     secret_code?: string;
+    allow_public_gallery?: boolean;
     sync_status?: string;
     last_sync_at?: string;
 }
@@ -369,6 +370,9 @@ export default function AdminDashboardClient() {
     const [galleryTotalPages, setGalleryTotalPages] = useState(1);
     const galleryContainerRef = useRef<HTMLDivElement>(null);
 
+    const [createAllowPublicGallery, setCreateAllowPublicGallery] = useState(true);
+    const [togglingGalleryEventId, setTogglingGalleryEventId] = useState<string | null>(null);
+
 
     const router = useRouter();
     const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -462,7 +466,8 @@ export default function AdminDashboardClient() {
             slug: formData.get("slug"),
             date: new Date(formData.get("date") as string).toISOString(),
             storage_type: createStorageType,
-            secret_code: formData.get("secret_code") || undefined
+            secret_code: formData.get("secret_code") || undefined,
+            allow_public_gallery: createAllowPublicGallery
         };
 
         if (createStorageType === "local") {
@@ -497,6 +502,7 @@ export default function AdminDashboardClient() {
                 toast.success("Event created successfully");
                 fetchEvents();
                 setCreateStoragePath("");
+                setCreateAllowPublicGallery(true);
                 (e.target as HTMLFormElement).reset();
             } else {
                 const err = await response.json();
@@ -665,6 +671,41 @@ export default function AdminDashboardClient() {
             toast.error("Network error");
         } finally {
             setSavingSecret(false);
+        }
+    };
+
+    const handleTogglePublicGallery = async (event: Event) => {
+        const token = Cookies.get("admin_token");
+        const nextValue = !(event.allow_public_gallery ?? true);
+        setTogglingGalleryEventId(event._id);
+
+        try {
+            const response = await fetch(`${API_URL}/events/${event._id}`, {
+                method: "PUT",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({ allow_public_gallery: nextValue })
+            });
+
+            if (response.ok) {
+                toast.success(
+                    nextValue
+                        ? `All photos are now visible to guests for "${event.name}"`
+                        : `All photos hidden. Guests can only view their selfie matches for "${event.name}"`
+                );
+                setEvents((prev) =>
+                    prev.map((e) => (e._id === event._id ? { ...e, allow_public_gallery: nextValue } : e))
+                );
+            } else {
+                toast.error("Failed to update photo visibility setting");
+            }
+        } catch (error) {
+            console.error("Error toggling public gallery:", error);
+            toast.error("Network error while updating setting");
+        } finally {
+            setTogglingGalleryEventId(null);
         }
     };
 
@@ -975,6 +1016,35 @@ export default function AdminDashboardClient() {
                                 <Label htmlFor="secret_code">Secret Event Code (Optional)</Label>
                                 <Input id="secret_code" name="secret_code" placeholder="Leave empty for public access" className="bg-background border-border" />
                             </div>
+
+                            <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-muted/30">
+                                <div className="space-y-0.5 pr-2">
+                                    <Label htmlFor="create_allow_public" className="text-xs font-semibold cursor-pointer">
+                                        Public All-Photos Browsing
+                                    </Label>
+                                    <p className="text-[11px] text-muted-foreground">
+                                        {createAllowPublicGallery
+                                            ? "Guests can view all photos in the event"
+                                            : "Restricted: Guests can only see their own selfie matches"}
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    id="create_allow_public"
+                                    role="switch"
+                                    aria-checked={createAllowPublicGallery}
+                                    onClick={() => setCreateAllowPublicGallery(!createAllowPublicGallery)}
+                                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                        createAllowPublicGallery ? "bg-indigo-600" : "bg-muted-foreground/30"
+                                    }`}
+                                >
+                                    <span
+                                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                                            createAllowPublicGallery ? "translate-x-5" : "translate-x-0"
+                                        }`}
+                                    />
+                                </button>
+                            </div>
                             <Button className="w-full bg-indigo-600 hover:bg-indigo-700 h-11 text-white border-none shadow-lg shadow-indigo-100 dark:shadow-none" disabled={creating}>
                                 {creating ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Plus className="w-4 h-4 mr-2" />}
                                 Create Event
@@ -1184,6 +1254,48 @@ export default function AdminDashboardClient() {
                                         <KeyRound className="w-3 h-3 mr-1" />
                                         {event.secret_code ? "Edit" : "Set Passcode"}
                                     </Button>
+                                </div>
+
+                                {/* Guest All-Photos Visibility Toggle */}
+                                <div className="flex items-center justify-between p-2.5 bg-muted/40 rounded-xl text-xs">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        {(event.allow_public_gallery ?? true) ? (
+                                            <>
+                                                <Eye className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                                                <div className="flex flex-col min-w-0">
+                                                    <span className="font-medium text-foreground text-[11px] leading-tight">All Photos View</span>
+                                                    <span className="text-[10px] text-muted-foreground truncate">Guests can browse all photos</span>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <EyeOff className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                                                <div className="flex flex-col min-w-0">
+                                                    <span className="font-medium text-foreground text-[11px] leading-tight">Selfie Matches Only</span>
+                                                    <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium truncate">All photos hidden from guests</span>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={event.allow_public_gallery ?? true}
+                                        disabled={togglingGalleryEventId === event._id}
+                                        onClick={() => handleTogglePublicGallery(event)}
+                                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-50 ${
+                                            (event.allow_public_gallery ?? true)
+                                                ? "bg-indigo-600"
+                                                : "bg-muted-foreground/30"
+                                        }`}
+                                        title={(event.allow_public_gallery ?? true) ? "Click to restrict: guests can only see selfie matches" : "Click to allow: guests can browse all photos"}
+                                    >
+                                        <span
+                                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                                                (event.allow_public_gallery ?? true) ? "translate-x-5" : "translate-x-0"
+                                            }`}
+                                        />
+                                    </button>
                                 </div>
 
                                 {event.storage_type === "local" ? (

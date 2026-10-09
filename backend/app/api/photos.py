@@ -589,10 +589,29 @@ async def get_event_photos(event_id: str, page: int = 1, limit: int = 100):
 @router.get("/public/{slug}/gallery")
 async def get_public_event_photos(slug: str, page: int = 1, limit: int = 50):
     """Get public photos for an event by its slug with pagination"""
-    event = await db.fetch_one("SELECT id, name, slug, date, secret_code FROM events WHERE slug = ?", (slug,))
+    event = await db.fetch_one("SELECT id, name, slug, date, secret_code, allow_public_gallery FROM events WHERE slug = ?", (slug,))
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     
+    allow_public_gallery = bool(event.get("allow_public_gallery", 1))
+    if not allow_public_gallery:
+        return {
+            "event": {
+                "_id": event["id"],
+                "id": event["id"],
+                "name": event["name"],
+                "slug": event["slug"],
+                "date": event["date"],
+                "is_protected": bool(event.get("secret_code")),
+                "allow_public_gallery": False
+            },
+            "photos": [],
+            "total": 0,
+            "page": 1,
+            "limit": limit,
+            "total_pages": 0
+        }
+
     event_id = event["id"]
     offset = (page - 1) * limit
     
@@ -621,7 +640,8 @@ async def get_public_event_photos(slug: str, page: int = 1, limit: int = 50):
             "name": event["name"],
             "slug": event["slug"],
             "date": event["date"],
-            "is_protected": bool(event.get("secret_code"))
+            "is_protected": bool(event.get("secret_code")),
+            "allow_public_gallery": True
         },
         "photos": [
             {

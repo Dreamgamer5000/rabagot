@@ -38,6 +38,7 @@ interface EventData {
     slug: string;
     date: string;
     is_protected: boolean;
+    allow_public_gallery?: boolean;
 }
 
 interface PhotoItem extends LightboxPhoto {
@@ -202,6 +203,7 @@ export default function EventGalleryClient() {
 
     const remainingPhotos = Math.max(0, totalPhotos - photos.length);
     const remainingMatchedPhotos = Math.max(0, matchedTotalCount - matchedPhotos.length);
+    const isPublicGalleryAllowed = event ? (event.allow_public_gallery ?? true) : true;
 
     // 1. Initial Load: Check session passcode & fetch Event info
     useEffect(() => {
@@ -249,7 +251,7 @@ export default function EventGalleryClient() {
     // 2. Fetch All Event Photos
     const fetchEventPhotos = useCallback(
         async (pageNum: number = 1, append: boolean = false) => {
-            if (!isVerified || isFetchingPhotosRef.current) return;
+            if (!isVerified || isFetchingPhotosRef.current || (event && event.allow_public_gallery === false)) return;
             isFetchingPhotosRef.current = true;
             setLoadingPhotos(true);
 
@@ -280,7 +282,7 @@ export default function EventGalleryClient() {
                 setLoadingPhotos(false);
             }
         },
-        [isVerified, slug, API_URL]
+        [isVerified, slug, API_URL, event]
     );
 
     // 3. Fetch Matched Photos for Guest
@@ -330,16 +332,25 @@ export default function EventGalleryClient() {
     // Trigger photos load when verified
     useEffect(() => {
         if (isVerified) {
-            fetchEventPhotos(1, false);
+            if (event?.allow_public_gallery !== false) {
+                fetchEventPhotos(1, false);
+            }
             if (matchedGuestId) {
                 fetchMatchedPhotos(matchedGuestId, 1, false);
             }
         }
-    }, [isVerified, fetchEventPhotos, matchedGuestId, fetchMatchedPhotos]);
+    }, [isVerified, fetchEventPhotos, matchedGuestId, fetchMatchedPhotos, event]);
+
+    // Automatically switch to "my" tab if public gallery is disabled and user has matched photos
+    useEffect(() => {
+        if (event && event.allow_public_gallery === false && matchedGuestId) {
+            setActiveTab("my");
+        }
+    }, [event, matchedGuestId]);
 
     // Auto-load Infinite Scroll for All Photos
     useEffect(() => {
-        if (activeTab !== "all" || !isVerified) return;
+        if (activeTab !== "all" || !isVerified || event?.allow_public_gallery === false) return;
         const sentinel = allPhotosSentinelRef.current;
         if (!sentinel) return;
 
@@ -355,7 +366,7 @@ export default function EventGalleryClient() {
 
         observer.observe(sentinel);
         return () => observer.disconnect();
-    }, [activeTab, isVerified, page, totalPages, fetchEventPhotos]);
+    }, [activeTab, isVerified, page, totalPages, fetchEventPhotos, event]);
 
     // Auto-load Infinite Scroll for Matched Photos
     useEffect(() => {
@@ -701,8 +712,17 @@ export default function EventGalleryClient() {
                                 </span>
                                 <span>•</span>
                                 <span className="flex items-center gap-1 font-medium text-foreground/80">
-                                    <Images className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500" />
-                                    {totalPhotos} photo{totalPhotos !== 1 ? "s" : ""}
+                                    {isPublicGalleryAllowed ? (
+                                        <>
+                                            <Images className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-indigo-500" />
+                                            {totalPhotos} photo{totalPhotos !== 1 ? "s" : ""}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Lock className="w-3.5 h-3.5 text-amber-500" />
+                                            <span>Selfie Search Only</span>
+                                        </>
+                                    )}
                                 </span>
                             </div>
                         </div>
@@ -731,17 +751,19 @@ export default function EventGalleryClient() {
                     <div className="border-t border-border/40 bg-muted/30">
                         <div className="container mx-auto px-3 sm:px-4 py-1.5 flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                                <button
-                                    onClick={() => setActiveTab("all")}
-                                    className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 shrink-0 ${
-                                        activeTab === "all"
-                                            ? "bg-indigo-600 text-white shadow-sm"
-                                            : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                                    }`}
-                                >
-                                    <Images className="w-3.5 h-3.5" />
-                                    All Photos ({totalPhotos})
-                                </button>
+                                {isPublicGalleryAllowed && (
+                                    <button
+                                        onClick={() => setActiveTab("all")}
+                                        className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 shrink-0 ${
+                                            activeTab === "all"
+                                                ? "bg-indigo-600 text-white shadow-sm"
+                                                : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                                        }`}
+                                    >
+                                        <Images className="w-3.5 h-3.5" />
+                                        All Photos ({totalPhotos})
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => setActiveTab("my")}
                                     className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full transition-all flex items-center gap-1.5 min-w-0 max-w-[160px] sm:max-w-none ${
@@ -786,7 +808,29 @@ export default function EventGalleryClient() {
                 {/* Photo Grid */}
                 {activeTab === "all" ? (
                     <div>
-                        {photos.length === 0 && !loadingPhotos ? (
+                        {!isPublicGalleryAllowed ? (
+                            <div className="flex flex-col items-center justify-center py-20 text-center max-w-md mx-auto">
+                                <div className="w-16 h-16 bg-indigo-500/10 text-indigo-600 rounded-2xl flex items-center justify-center mb-4">
+                                    <Lock className="w-8 h-8" />
+                                </div>
+                                <h3 className="text-xl font-bold mb-2">Private Event Gallery</h3>
+                                <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
+                                    The event host has restricted public photo browsing. Take a selfie to instantly find and unlock your personal photos!
+                                </p>
+                                <Button
+                                    onClick={() => {
+                                        setIsSearchModalOpen(true);
+                                        setCapturedSelfie(null);
+                                        setSelfieFile(null);
+                                        trackEvent("selfie_modal_opened", { event: slug });
+                                    }}
+                                    className="bg-gradient-to-r from-[#1B72E8] via-[#8E51DA] to-[#D94F70] hover:brightness-105 text-white font-medium shadow-md rounded-full px-6 h-11 flex items-center gap-2"
+                                >
+                                    <Sparkles className="w-4 h-4 text-white" />
+                                    Find My Photos with 1 Selfie
+                                </Button>
+                            </div>
+                        ) : photos.length === 0 && !loadingPhotos ? (
                             <div className="flex flex-col items-center justify-center py-20 text-center">
                                 <div className="w-16 h-16 bg-muted/60 text-muted-foreground rounded-2xl flex items-center justify-center mb-4">
                                     <Images className="w-8 h-8" />
@@ -866,7 +910,7 @@ export default function EventGalleryClient() {
                         )}
 
                         {/* Auto-Load Infinite Scroll Sentinel & Remaining Counter */}
-                        {photos.length > 0 && (
+                        {isPublicGalleryAllowed && photos.length > 0 && (
                             page < totalPages ? (
                                 <div
                                     ref={allPhotosSentinelRef}

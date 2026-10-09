@@ -19,6 +19,7 @@ class EventCreate(BaseModel):
     storage_path: Optional[str] = None
     drive_folder_url: Optional[str] = None
     secret_code: Optional[str] = None
+    allow_public_gallery: Optional[bool] = True
 
 class EventResponse(BaseModel):
     id: str = Field(alias="_id")
@@ -29,6 +30,7 @@ class EventResponse(BaseModel):
     storage_path: Optional[str] = None
     drive_folder_url: Optional[str] = None
     secret_code: Optional[str] = None
+    allow_public_gallery: bool = True
     created_at: datetime
     sync_status: str = "idle" # idle, syncing, completed, error
     last_sync_at: Optional[datetime] = None
@@ -42,6 +44,7 @@ class PublicEventResponse(BaseModel):
     slug: str
     date: datetime
     is_protected: bool
+    allow_public_gallery: bool = True
     created_at: datetime
 
     class Config:
@@ -63,6 +66,8 @@ def format_event(row):
     
     # Add protection flag
     d["is_protected"] = bool(d.get("secret_code"))
+    # Add allow_public_gallery flag (default True)
+    d["allow_public_gallery"] = bool(d.get("allow_public_gallery", 1))
     return d
 
 @router.get("/public/list", response_model=List[PublicEventResponse])
@@ -118,10 +123,11 @@ async def create_event(event: EventCreate):
     
     event_id = str(uuid.uuid4())
     created_at = datetime.utcnow().isoformat()
+    allow_pub = 1 if event.allow_public_gallery is not False else 0
     
     await db.execute("""
-        INSERT INTO events (id, name, slug, date, drive_folder_url, storage_type, storage_path, secret_code, sync_status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO events (id, name, slug, date, drive_folder_url, storage_type, storage_path, secret_code, allow_public_gallery, sync_status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         event_id, 
         event.name, 
@@ -131,6 +137,7 @@ async def create_event(event: EventCreate):
         storage_type,
         event.storage_path,
         event.secret_code,
+        allow_pub,
         "idle", 
         created_at
     ))
@@ -145,7 +152,7 @@ async def list_events():
     return [format_event(row) for row in rows]
 
 ALLOWED_UPDATE_FIELDS = {
-    "name", "slug", "date", "drive_folder_url", "storage_type", "storage_path", "secret_code"
+    "name", "slug", "date", "drive_folder_url", "storage_type", "storage_path", "secret_code", "allow_public_gallery"
 }
 
 @router.put("/{event_id}", response_model=EventResponse)
@@ -186,6 +193,10 @@ async def update_event(event_id: str, event_data: dict):
                 value = value.strip() or None
             elif not value:
                 value = None
+
+        # Normalize allow_public_gallery to SQLite integer 1 or 0
+        if key == "allow_public_gallery":
+            value = 1 if value else 0
 
         fields.append(f"{key} = ?")
         if isinstance(value, datetime):
