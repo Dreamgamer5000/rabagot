@@ -765,7 +765,32 @@ async def get_original(photo_id: str):
     if local_path:
         return FileResponse(local_path)
 
-    # 3. Google Drive fallback
+    # 3. Check 2K local preview fallback (e.g. if deployed to server without raw originals)
+    preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{photo_id}.webp")
+    if os.path.exists(preview_path):
+        raw_name = photo.get("original_file_name") or f"{photo_id}.jpg"
+        base_name, _ = os.path.splitext(raw_name)
+        jpeg_filename = f"{base_name}.jpg"
+        try:
+            with Image.open(preview_path) as img:
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=90, optimize=True)
+                jpeg_bytes = buf.getvalue()
+            return Response(
+                content=jpeg_bytes,
+                media_type="image/jpeg",
+                headers={
+                    "Content-Disposition": f'inline; filename="{jpeg_filename}"',
+                    "Content-Length": str(len(jpeg_bytes))
+                }
+            )
+        except Exception as e:
+            print(f"Error converting preview to JPEG for get_original {photo_id}: {e}")
+            return FileResponse(preview_path, media_type="image/webp", filename=f"{base_name}.webp")
+
+    # 4. Google Drive fallback
     if photo.get("drive_file_id"):
         try:
             content, filename = await drive_service.download_file(

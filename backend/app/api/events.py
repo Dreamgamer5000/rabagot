@@ -1,10 +1,13 @@
+import os
 import uuid
 import json
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from app.services.db import db
+from app.api.auth import get_current_admin
+from app.services.storage.local_provider import SUPPORTED_EXTENSIONS, IGNORED_DIR_NAMES
 
 router = APIRouter(prefix="/events", tags=["events"],)
 
@@ -200,6 +203,118 @@ async def update_event(event_id: str, event_data: dict):
     
     updated = await db.fetch_one("SELECT * FROM events WHERE id = ?", (event_id,))
     return format_event(updated)
+
+
+@router.get("/browse-directories")
+async def browse_directories(
+    path: Optional[str] = Query(None),
+    admin: str = Depends(get_current_admin)
+):
+    """
+    Safely browse filesystem directories on the server/laptop for the admin folder picker.
+    Returns breadcrumbs and subdirectories with photo counts in a fully generalized way.
+    """
+    cwd = os.path.abspath(".")
+
+    # Determine target path to browse
+    if not path or not path.strip():
+        if os.path.exists("/home") and os.path.isdir("/home"):
+            target_path = "/home"
+        elif os.path.exists("/photos") and os.path.isdir("/photos"):
+            target_path = "/photos"
+        else:
+            target_path = cwd
+    else:
+        target_path = os.path.abspath(os.path.expanduser(path.strip()))
+
+    if not os.path.exists(target_path):
+        parent_candidate = os.path.dirname(target_path)
+        if os.path.exists(parent_candidate) and os.path.isdir(parent_candidate):
+            target_path = parent_candidate
+        else:
+            target_path = cwd
+
+    if not os.path.isdir(target_path):
+        target_path = os.path.dirname(target_path)
+
+    # Build breadcrumbs
+    parts = []
+    curr = target_path
+    while curr and curr != "/":
+        parts.append({"name": os.path.basename(curr) or curr, "path": curr})
+        curr = os.path.dirname(curr)
+    parts.append({"name": "Root", "path": "/"})
+    breadcrumbs = list(reversed(parts))
+
+    parent_path = os.path.dirname(target_path) if target_path != "/" else None
+
+    # Count photos and scan subdirectories
+    photos_count = 0
+    directories = []
+    SYSTEM_IGNORE = {"proc", "sys", "dev", "run", "etc", "boot", "lost+found"}
+
+    try:
+        with os.scandir(target_path) as it:
+            for entry in it:
+                try:
+                    if entry.name.startswith("."):
+                        continue
+                    if entry.name.lower() in IGNORED_DIR_NAMES:
+                        continue
+                    if target_path == "/" and entry.name.lower() in SYSTEM_IGNORE:
+                        continue
+
+                    if entry.is_dir(follow_symlinks=False):
+                        dir_path = entry.path
+                        sub_photo_count = 0
+                        has_subdirs = False
+                        try:
+                            with os.scandir(dir_path) as sub_it:
+                                for sub_entry in sub_it:
+                                    if sub_entry.name.startswith("."):
+                                        continue
+                                    if sub_entry.is_file(follow_symlinks=False):
+                                        ext = os.path.splitext(sub_entry.name)[1].lower()
+                                        if ext in SUPPORTED_EXTENSIONS:
+                                            sub_photo_count += 1
+                                    elif sub_entry.is_dir(follow_symlinks=False):
+                                        if sub_entry.name.lower() not in IGNORED_DIR_NAMES:
+                                            has_subdirs = True
+                        except (PermissionError, OSError):
+                            pass
+
+                        directories.append({
+                            "name": entry.name,
+                            "path": dir_path,
+                            "photos_count": sub_photo_count,
+                            "has_subdirs": has_subdirs
+                        })
+                    elif entry.is_file(follow_symlinks=False):
+                        ext = os.path.splitext(entry.name)[1].lower()
+                        if ext in SUPPORTED_EXTENSIONS:
+                            photos_count += 1
+                except (PermissionError, OSError):
+                    continue
+    except (PermissionError, OSError) as e:
+        return {
+            "current_path": target_path,
+            "parent_path": parent_path,
+            "breadcrumbs": breadcrumbs,
+            "photos_count": 0,
+            "directories": [],
+            "error": f"Permission denied accessing directory: {str(e)}"
+        }
+
+    directories.sort(key=lambda d: d["name"].lower())
+
+    return {
+        "current_path": target_path,
+        "parent_path": parent_path,
+        "breadcrumbs": breadcrumbs,
+        "photos_count": photos_count,
+        "directories": directories
+    }
+
 
 @router.get("/{event_id}", response_model=EventResponse)
 async def get_event(event_id: str):

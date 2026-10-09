@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Lock, Unlock, Eye, EyeOff, Sparkles, Cloud, Folder } from "lucide-react";
+import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Lock, Unlock, Eye, EyeOff, Sparkles, Cloud, Folder, ArrowUp } from "lucide-react";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -76,6 +76,27 @@ interface StorageInfo {
     used_storage_gb: number;
     photo_count: number;
     guest_count: number;
+}
+
+interface DirectoryItem {
+    name: string;
+    path: string;
+    photos_count: number;
+    has_subdirs: boolean;
+}
+
+interface Breadcrumb {
+    name: string;
+    path: string;
+}
+
+interface BrowseData {
+    current_path: string;
+    parent_path: string | null;
+    breadcrumbs: Breadcrumb[];
+    photos_count: number;
+    directories: DirectoryItem[];
+    error?: string;
 }
 
 const EventStatus = ({ eventId, apiUrl, syncStatus, lastSyncAt, onSyncComplete }: {
@@ -319,8 +340,14 @@ export default function AdminDashboardClient() {
     const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
     const [driveUrl, setDriveUrl] = useState("");
     const [createStorageType, setCreateStorageType] = useState<"drive" | "local">("drive");
+    const [createStoragePath, setCreateStoragePath] = useState("");
     const [updateStorageType, setUpdateStorageType] = useState<"drive" | "local">("drive");
     const [updateStoragePath, setUpdateStoragePath] = useState("");
+    const [showDirBrowser, setShowDirBrowser] = useState(false);
+    const [dirBrowserTarget, setDirBrowserTarget] = useState<"create" | "update">("create");
+    const [browseData, setBrowseData] = useState<BrowseData | null>(null);
+    const [loadingBrowse, setLoadingBrowse] = useState(false);
+    const [browseFilter, setBrowseFilter] = useState("");
     const [showGuestsModal, setShowGuestsModal] = useState(false);
     const [selectedEventForGuests, setSelectedEventForGuests] = useState<Event | null>(null);
     const [guests, setGuests] = useState<Guest[]>([]);
@@ -345,6 +372,47 @@ export default function AdminDashboardClient() {
 
     const router = useRouter();
     const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+
+    const fetchBrowseDirectories = useCallback(async (targetPath?: string) => {
+        setLoadingBrowse(true);
+        setBrowseFilter("");
+        try {
+            const token = Cookies.get("admin_token");
+            const query = targetPath ? `?path=${encodeURIComponent(targetPath)}` : "";
+            const res = await fetch(`${API_URL}/events/browse-directories${query}`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data: BrowseData = await res.json();
+                setBrowseData(data);
+            } else {
+                toast.error("Failed to browse server directories");
+            }
+        } catch (error) {
+            console.error("Browse directories error:", error);
+            toast.error("Network error while browsing directories");
+        } finally {
+            setLoadingBrowse(false);
+        }
+    }, [API_URL]);
+
+    const handleOpenDirBrowser = (target: "create" | "update") => {
+        setDirBrowserTarget(target);
+        setShowDirBrowser(true);
+        const initialPath = target === "create" ? createStoragePath : updateStoragePath;
+        fetchBrowseDirectories(initialPath || undefined);
+    };
+
+    const handleSelectDirectory = (chosenPath: string) => {
+        if (dirBrowserTarget === "create") {
+            setCreateStoragePath(chosenPath);
+        } else {
+            setUpdateStoragePath(chosenPath);
+        }
+        setShowDirBrowser(false);
+        const countInfo = browseData?.photos_count ? ` (${browseData.photos_count} photos detected)` : "";
+        toast.success(`Selected folder: ${chosenPath}${countInfo}`);
+    };
 
     const fetchEvents = useCallback(async () => {
         try {
@@ -398,7 +466,7 @@ export default function AdminDashboardClient() {
         };
 
         if (createStorageType === "local") {
-            const pathVal = (formData.get("storage_path") as string)?.trim();
+            const pathVal = createStoragePath.trim() || (formData.get("storage_path") as string)?.trim();
             if (!pathVal) {
                 toast.error("Please enter a local storage directory path");
                 setCreating(false);
@@ -428,6 +496,7 @@ export default function AdminDashboardClient() {
             if (response.ok) {
                 toast.success("Event created successfully");
                 fetchEvents();
+                setCreateStoragePath("");
                 (e.target as HTMLFormElement).reset();
             } else {
                 const err = await response.json();
@@ -867,9 +936,38 @@ export default function AdminDashboardClient() {
                                 </div>
                             ) : (
                                 <div className="space-y-2">
-                                    <Label htmlFor="storage_path">Server / NAS Directory Path</Label>
-                                    <Input id="storage_path" name="storage_path" placeholder="/photos/wedding-2026 or photos/event" required className="bg-background border-border font-mono text-xs" />
-                                    <p className="text-[11px] text-muted-foreground">Direct directory path on the server/NAS. Fast zero-copy indexing with 0 Google Drive API calls.</p>
+                                    <div className="flex items-center justify-between">
+                                        <Label htmlFor="storage_path">Server / NAS Directory Path</Label>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => handleOpenDirBrowser("create")}
+                                            className="h-7 px-2.5 text-xs text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 gap-1.5 cursor-pointer"
+                                        >
+                                            <Folder className="w-3.5 h-3.5" />
+                                            Browse Folders
+                                        </Button>
+                                    </div>
+                                    <div className="relative flex items-center">
+                                        <Input
+                                            id="storage_path"
+                                            name="storage_path"
+                                            value={createStoragePath}
+                                            onChange={(e) => setCreateStoragePath(e.target.value)}
+                                            placeholder="/photos/wedding-2026 or photos/event"
+                                            required={createStorageType === "local"}
+                                            className="bg-background border-border font-mono text-xs pr-20"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => handleOpenDirBrowser("create")}
+                                            className="absolute right-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1 cursor-pointer"
+                                        >
+                                            Browse
+                                        </button>
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground">Direct directory path on server/laptop. Click <strong>Browse Folders</strong> to select your folder without manual typing.</p>
                                 </div>
                             )}
 
@@ -974,17 +1072,35 @@ export default function AdminDashboardClient() {
                                 </div>
                             ) : (
                                 <div className="space-y-2">
-                                    <Label htmlFor="updateStoragePath">Local Server / NAS Directory Path</Label>
-                                    <div className="relative">
+                                    <div className="flex items-center justify-between">
+                                        <Label htmlFor="updateStoragePath">Local Server / NAS Directory Path</Label>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => handleOpenDirBrowser("update")}
+                                            className="h-7 px-2.5 text-xs text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 gap-1.5 cursor-pointer"
+                                        >
+                                            <Folder className="w-3.5 h-3.5" />
+                                            Browse Folders
+                                        </Button>
+                                    </div>
+                                    <div className="relative flex items-center">
                                         <Input
                                             id="updateStoragePath"
                                             value={updateStoragePath}
                                             onChange={(e) => setUpdateStoragePath(e.target.value)}
                                             placeholder="/photos/wedding-2026 or photos/event"
                                             required={updateStorageType === "local"}
-                                            className="pr-10 bg-background border-border font-mono text-xs"
+                                            className="pr-20 bg-background border-border font-mono text-xs"
                                         />
-                                        <HardDrive className="absolute right-3 top-2.5 w-4 h-4 text-muted-foreground" />
+                                        <button
+                                            type="button"
+                                            onClick={() => handleOpenDirBrowser("update")}
+                                            className="absolute right-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline px-2 py-1 cursor-pointer"
+                                        >
+                                            Browse
+                                        </button>
                                     </div>
                                 </div>
                             )}
@@ -1724,6 +1840,223 @@ export default function AdminDashboardClient() {
                                 </div>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* In-App Directory Browser Modal */}
+            {showDirBrowser && (
+                <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in-50 zoom-in-95 duration-200">
+                        {/* Modal Header */}
+                        <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between bg-muted/20">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
+                                    <Folder className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-foreground text-base">Select Event Photo Folder</h3>
+                                    <p className="text-xs text-muted-foreground">
+                                        Browse directories on your machine and choose your photo folder
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setShowDirBrowser(false)}
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Breadcrumb Navigation Bar & Search */}
+                        <div className="p-3 border-b border-border space-y-2 bg-card">
+                            <div className="flex items-center gap-2">
+                                {/* Up Button */}
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={!browseData?.parent_path || loadingBrowse}
+                                    onClick={() => browseData?.parent_path && fetchBrowseDirectories(browseData.parent_path)}
+                                    className="h-8 px-2 text-xs gap-1 border-border bg-background"
+                                    title="Up one folder"
+                                >
+                                    <ArrowUp className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Up</span>
+                                </Button>
+
+                                {/* Breadcrumbs Trail */}
+                                <div className="flex-1 flex items-center gap-1 text-xs font-mono bg-muted/40 px-2.5 py-1.5 rounded-lg overflow-x-auto border border-border min-w-0">
+                                    {browseData?.breadcrumbs.map((crumb, idx) => (
+                                        <React.Fragment key={crumb.path}>
+                                            {idx > 0 && <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />}
+                                            <button
+                                                type="button"
+                                                onClick={() => fetchBrowseDirectories(crumb.path)}
+                                                className={`hover:underline truncate shrink-0 cursor-pointer ${
+                                                    idx === browseData.breadcrumbs.length - 1
+                                                        ? "font-bold text-indigo-600 dark:text-indigo-400"
+                                                        : "text-muted-foreground hover:text-foreground"
+                                                }`}
+                                            >
+                                                {crumb.name}
+                                            </button>
+                                        </React.Fragment>
+                                    ))}
+                                </div>
+
+                                {/* Refresh */}
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={loadingBrowse}
+                                    onClick={() => fetchBrowseDirectories(browseData?.current_path)}
+                                    className="h-8 w-8 p-0"
+                                    title="Refresh directory"
+                                >
+                                    <RefreshCw className={`w-3.5 h-3.5 ${loadingBrowse ? 'animate-spin' : ''}`} />
+                                </Button>
+                            </div>
+
+                            {/* Filter Input */}
+                            <div className="relative">
+                                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                                <Input
+                                    value={browseFilter}
+                                    onChange={(e) => setBrowseFilter(e.target.value)}
+                                    placeholder="Filter subfolders in current view..."
+                                    className="h-8 pl-8 text-xs bg-muted/20 border-border"
+                                />
+                                {browseFilter && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setBrowseFilter("")}
+                                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                                    >
+                                        <X className="w-3.5 h-3.5" />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Folder Listing Content Area */}
+                        <div className="p-3 overflow-y-auto flex-1 min-h-[220px] max-h-[360px] space-y-1">
+                            {loadingBrowse ? (
+                                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+                                    <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                                    <span className="text-xs">Reading directories...</span>
+                                </div>
+                            ) : browseData?.error ? (
+                                <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-xs">
+                                    {browseData.error}
+                                </div>
+                            ) : (
+                                <>
+                                    {/* Current folder photos indicator banner */}
+                                    {browseData && browseData.photos_count > 0 && (
+                                        <div className="mb-2 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                                <span className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                                                    {browseData.photos_count} photo{browseData.photos_count !== 1 ? 's' : ''} detected directly in this folder
+                                                </span>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                onClick={() => handleSelectDirectory(browseData.current_path)}
+                                                className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+                                            >
+                                                Select This Folder
+                                            </Button>
+                                        </div>
+                                    )}
+
+                                    {/* Filtered directories */}
+                                    {(() => {
+                                        const filtered = (browseData?.directories || []).filter(d =>
+                                            d.name.toLowerCase().includes(browseFilter.toLowerCase())
+                                        );
+
+                                        if (filtered.length === 0) {
+                                            return (
+                                                <div className="text-center py-10 text-muted-foreground text-xs">
+                                                    {browseFilter
+                                                        ? `No folders match "${browseFilter}"`
+                                                        : "No subdirectories found in this folder"}
+                                                </div>
+                                            );
+                                        }
+
+                                        return filtered.map((dir) => (
+                                            <div
+                                                key={dir.path}
+                                                onClick={() => fetchBrowseDirectories(dir.path)}
+                                                className="flex items-center justify-between p-2.5 rounded-xl hover:bg-muted/60 transition-colors cursor-pointer group border border-transparent hover:border-border"
+                                            >
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    <Folder className="w-4 h-4 text-amber-500 shrink-0 group-hover:scale-110 transition-transform" />
+                                                    <span className="text-xs font-medium text-foreground truncate">{dir.name}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    {dir.photos_count > 0 && (
+                                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300">
+                                                            {dir.photos_count} photo{dir.photos_count !== 1 ? 's' : ''}
+                                                        </span>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleSelectDirectory(dir.path);
+                                                        }}
+                                                        className="opacity-0 group-hover:opacity-100 px-2 py-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 rounded transition-all cursor-pointer"
+                                                    >
+                                                        Choose
+                                                    </button>
+                                                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                                                </div>
+                                            </div>
+                                        ));
+                                    })()}
+                                </>
+                            )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div className="p-4 border-t border-border bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3">
+                            <div className="w-full sm:w-auto min-w-0 text-left">
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                                    Current Location
+                                </p>
+                                <p className="text-xs font-mono text-foreground truncate max-w-sm" title={browseData?.current_path}>
+                                    {browseData?.current_path || "Loading..."}
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setShowDirBrowser(false)}
+                                    className="text-xs"
+                                >
+                                    Cancel
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    disabled={!browseData?.current_path}
+                                    onClick={() => browseData?.current_path && handleSelectDirectory(browseData.current_path)}
+                                    className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-md shadow-indigo-100 dark:shadow-none cursor-pointer"
+                                >
+                                    <Check className="w-3.5 h-3.5 mr-1.5" />
+                                    Select Current Folder
+                                </Button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}

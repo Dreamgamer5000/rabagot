@@ -6,6 +6,7 @@ services:
     volumes:
       - ./data:/app/data:z
       - ${LOCAL_PHOTOS_DIR:-./photos}:/photos:ro
+      - /home:/home:ro
     env_file:
       - .env
     restart: "no"
