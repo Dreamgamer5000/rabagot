@@ -102,13 +102,24 @@ export async function compressImage(
 
 ## 4. Serving & Download Architecture
 
-When guests download photos, the server executes the following fallback sequence:
+When guests download photos or view masters, the server executes the following resilient fallback sequence:
 
 ### Single Photo Route: `GET /photos/download/{photo_id}`
 ([`backend/app/api/photos.py`](file:///home/dream/Documents/PICSHARE/backend/app/api/photos.py#L753))
-1. **Local Master Check**: If the original camera file exists in `settings.UPLOAD_ROOT`, it is served directly.
-2. **2K Preview Fast Path**: If only previews exist (standard VPS configuration), reads `data/previews/{photo_id}.webp`, converts to JPEG (`quality=90, optimize=True`) in memory in ~8ms, and streams with `Content-Disposition: attachment`.
+1. **Local Master Check**: If the original camera file exists in `settings.UPLOAD_ROOT` or `storage_path`, it is served directly.
+2. **2K Preview Fast Path**: If only previews exist (standard VPS configuration), reads `data/previews/{photo_id}.webp`, converts to JPEG (`quality=92, optimize=True`) in memory in ~8ms, and streams with `Content-Disposition: attachment`.
 3. **Google Drive Fallback**: If local files are absent, falls back to downloading the master from Google Drive.
+
+### Master Original View & Fallback: `GET /photos/original/{photo_id}`
+([`backend/app/api/photos.py`](file:///home/dream/Documents/PICSHARE/backend/app/api/photos.py#L768))
+* Checks for the master file on disk.
+* **Resilient Fallback Safeguard**: If the original camera file is missing from disk or unmounted, the endpoint converts the 2K WebP preview (`data/previews/{photo_id}.webp`) to JPEG (`quality=92`) on-the-fly and streams it. This eliminates 404 broken image errors across the board.
+
+### Multi-Select Bulk ZIP Archive: `POST /photos/download-zip`
+([`backend/app/api/photos.py`](file:///home/dream/Documents/PICSHARE/backend/app/api/photos.py#L820))
+* Accepts an array of selected photo IDs.
+* Pulls from master files or falls back to 2K WebP preview conversions.
+* Streams an on-the-fly compressed ZIP archive with non-blocking concurrency queueing.
 
 ### Guest ZIP Bundle Route: `GET /guests/{request_id}/download-zip`
 ([`backend/app/api/guests.py`](file:///home/dream/Documents/PICSHARE/backend/app/api/guests.py#L360))
@@ -118,7 +129,18 @@ When guests download photos, the server executes the following fallback sequence
 
 ---
 
-## 5. Configuration & Future Tuning Recipes
+## 5. Chronological Natural Photo Sorting
+
+Gallery feeds (both public and admin) are sorted using SQLite's natural alphabetical collation:
+```sql
+ORDER BY original_file_name COLLATE NOCASE ASC
+```
+* **Why not `created_at`?** Filesystem discovery (`os.walk` or Drive API pagination) returns files in non-deterministic inode order.
+* **Camera Filename Sequencing**: Modern cameras name photos sequentially (`ABI6011.JPG`, `ABI6012.JPG`, etc.). Case-insensitive natural ordering guarantees photos display in chronological capture sequence without requiring heavy EXIF date extraction on every frame.
+
+---
+
+## 6. Configuration & Future Tuning Recipes
 
 ### Recipe 1: Increasing JPEG Download Quality (Q90 $\rightarrow$ Q95)
 To maximize download quality with negligible impact on conversion speed:

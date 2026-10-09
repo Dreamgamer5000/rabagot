@@ -14,15 +14,30 @@
 - ⚡ **3-Tier High-Performance Storage Architecture**:
   - **Tier 1 (Grid Thumbnails)**: 512px JPEG (`data/thumbnails/`) for instantaneous grid card rendering.
   - **Tier 2 (2K WebP Screen Previews)**: 2048px WebP (`data/previews/`, Quality 82) for **< 4ms fullscreen viewing & zooming on 4K/Retina displays**, saving 95% bandwidth and 0 Google Drive API quota.
-  - **Tier 3 (Master RAW Storage)**: Cold storage kept permanently for free on **Google Drive**, streamed on-demand only for single master downloads or ZIP packaging.
+  - **Tier 3 (Master RAW Storage)**: Cold storage kept permanently for free on **Google Drive** or local disk, streamed on-demand only for single master downloads or ZIP packaging.
+- ♾️ **Auto-Load (Infinite Scroll) Gallery & Live Remaining Counter**:
+  - Seamless `IntersectionObserver` pre-fetches the next batch of photos 350px before reaching the bottom. No manual clicking required.
+  - Real-time remaining photo counter with live pulsing indicators (`X photos remaining • Auto-loading as you scroll`) and completion badges (`All X photos loaded ✓`).
+  - Thread-safe concurrency locks and ID deduplication prevent duplicate cards during rapid scrolling.
+- 🔒 **Public "All Photos" Visibility Control (Host Privacy Toggle)**:
+  - 1-click toggle on each event card in the Admin Dashboard to switch between full gallery browsing and **Selfie Matches Only** (private events like weddings and corporate parties).
+  - When restricted, guests only see photos of themselves matched via facial recognition.
+  - Enforced at both the frontend UI and backend API level (`/photos/public/{slug}/gallery`) to prevent scraping.
+- 📁 **In-App Generalized Server Directory Browser**:
+  - Visual folder picker modal built into the Admin Dashboard for local storage paths.
+  - Full breadcrumb navigation starting from host `/home` (mounted as `/home:ro`) with real-time folder search/filtering and child counts.
+- ⏱️ **Natural Chronological Photo Sorting**:
+  - Automatically sorts photos by camera sequence (`original_file_name COLLATE NOCASE ASC`) rather than arbitrary disk scan timestamps, ensuring photos appear in exact capture order.
+- 🛡️ **Resilient 2K Preview Download Fallback**:
+  - Converts local 2K WebP previews to high-quality JPEG on-the-fly (`quality=92`) for single downloads and bulk ZIPs if raw camera files are offline or unmounted, guaranteeing zero 404 errors.
 - 🗂️ **Multi-Select & Bulk ZIP Download**:
   - Top-left selection checkboxes on photo cards across Event and Guest galleries.
   - Sleek floating glassmorphism action dock with `Select All`, `Deselect All`, and single-click `Download ZIP (N)`.
   - Backend streaming ZIP packaging (`POST /photos/download-zip`) on-the-fly.
 - 🔄 **Two-Way Deletion Sync & Delta Pruning**:
   - Compares Google Drive files with SQLite. Syncing automatically indexes new photos and prunes deleted Drive photos from the database, vectors, thumbnails, and preview cache.
-- 🚀 **Configurable Parallel Syncing**:
-  - Tune processing speed to your server hardware using `SYNC_CONCURRENCY` (1–2 for low-end VPS, 4–8 for standard servers, 12–16 for high-end Ryzen/GPU workstations).
+- 🚀 **Configurable Parallel Syncing & Hardware Tuning**:
+  - Scale processing speed to your server hardware using `SYNC_CONCURRENCY`, `BACKEND_CPU_COUNT`, and `BACKEND_MEM_LIMIT` (e.g. 12 concurrency and 14 cores for high-end Ryzen workstations).
 - 📱 **Guest Self-Service & Fast AI Search**:
   - Guests take or upload a selfie to instantly receive a curated gallery of their matched event photos.
 - 🗜️ **Client-Side Image Compression**:
@@ -107,35 +122,31 @@
 
 1. **Photo Storage Setup**:
    - **Option A — Local Folder / NAS (Easiest)**:
-     Place photos in `./photos/<event-name>/` (or set `LOCAL_PHOTOS_DIR=/path/to/photos` in `.env`). In the Admin dashboard, choose **Local Folder / NAS** and specify `/photos/<event-name>`.
+     Place photos in `./photos/<event-name>/` (or set `LOCAL_PHOTOS_DIR=/path/to/photos` in `.env`). In the Admin dashboard, choose **Local Folder / NAS** and use the in-app directory browser to select your folder with zero manual typing.
    - **Option B — Google Drive**:
      Create a Google Cloud Project, enable the **Google Drive API**, create a Service Account, and place the JSON key file in `backend/data/accounts/0.json`. Share your Google Drive event folder with the Service Account email address with **Viewer** access.
 
-2. **Backend Configuration**:
-   Create `backend/.env`:
+2. **Docker & Hardware Tuning (`.env` in root)**:
+   Copy `.env.example` to `.env` in the repository root. You can tune container resources to match your workstation or VPS hardware:
 
    ```ini
-   # --- Security & Authentication ---
-   ADMIN_PASSWORD=your_admin_password
+   # --- Security & Credentials ---
+   ADMIN_PASSWORD=your_secure_password
    SECRET_KEY=YourSuperSecretKeyForJWT
 
-   # --- Face Recognition Settings ---
-   FACE_SIMILARITY_THRESHOLD=0.6
+   # --- Local Photo Storage Directory ---
+   LOCAL_PHOTOS_DIR=./photos
 
-   # --- Sync & Performance Settings ---
-   # Concurrency level: 1-2 for low-end VPS, 4-8 for standard servers, 10-16 for multi-core CPUs (e.g. Ryzen 9)
-   SYNC_CONCURRENCY=4
+   # --- Sync & Parallelism ---
+   # Concurrency: 1-2 for budget VPS, 4-8 for standard servers, 10-16 for multi-core workstations (e.g. Ryzen 9)
+   SYNC_CONCURRENCY=12
 
-   # --- Database & Storage Paths ---
-   DB_PATH=data/app.db
-   SERVICE_ACCOUNTS_DIR=data/accounts
-   UPLOAD_ROOT=data/uploads
-   THUMBNAIL_ROOT=data/thumbnails
-   PREVIEWS_ROOT=data/previews
+   # --- Container Resource Allocation (Docker Compose) ---
+   BACKEND_CPU_COUNT=14
+   BACKEND_MEM_LIMIT=24G
    ```
 
-3. **Frontend Configuration**:
-   Create `frontend/.env.local`:
+3. **Frontend Configuration** (`frontend/.env.local` for manual local dev):
    ```env
    NEXT_PUBLIC_API_URL=/api
    ```
