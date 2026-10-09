@@ -62,6 +62,7 @@ class LocalStorageProvider(StorageProvider):
                             "path": full_path,
                             "size": f_size
                         })
+            items.sort(key=lambda x: x["name"].lower())
             return items
 
         return await asyncio.to_thread(_scan)

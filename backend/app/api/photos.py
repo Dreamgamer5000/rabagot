@@ -555,7 +555,7 @@ async def get_event_photos(event_id: str, page: int = 1, limit: int = 100):
                faces_count, status, created_at, drive_file_id
         FROM photos 
         WHERE event_id = ?
-        ORDER BY created_at DESC
+        ORDER BY original_file_name COLLATE NOCASE ASC
         LIMIT ? OFFSET ?
         """,
         (event_id, limit, offset)
@@ -608,7 +608,7 @@ async def get_public_event_photos(slug: str, page: int = 1, limit: int = 50):
                faces_count, status, created_at, drive_file_id
         FROM photos 
         WHERE event_id = ? AND status = 'processed'
-        ORDER BY created_at DESC
+        ORDER BY original_file_name COLLATE NOCASE ASC
         LIMIT ? OFFSET ?
         """,
         (event_id, limit, offset)
