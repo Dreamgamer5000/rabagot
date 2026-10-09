@@ -12,6 +12,8 @@ class EventCreate(BaseModel):
     name: str
     slug: str
     date: datetime
+    storage_type: Optional[str] = "drive"
+    storage_path: Optional[str] = None
     drive_folder_url: Optional[str] = None
     secret_code: Optional[str] = None
 
@@ -20,6 +22,8 @@ class EventResponse(BaseModel):
     name: str
     slug: str
     date: datetime
+    storage_type: Optional[str] = "drive"
+    storage_path: Optional[str] = None
     drive_folder_url: Optional[str] = None
     secret_code: Optional[str] = None
     created_at: datetime
@@ -94,18 +98,35 @@ async def create_event(event: EventCreate):
     if existing:
         raise HTTPException(status_code=400, detail="Slug already exists")
     
+    storage_type = (event.storage_type or "drive").lower().strip()
+    if storage_type == "local":
+        if not event.storage_path or not event.storage_path.strip():
+            raise HTTPException(status_code=400, detail="Local directory path is required when storage_type is 'local'")
+        from app.services.storage.factory import get_storage_provider
+        provider = get_storage_provider("local")
+        resolved = provider.resolve_directory(event.storage_path)
+        if not resolved:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Directory does not exist or is not accessible on server: {event.storage_path}"
+            )
+    else:
+        storage_type = "drive"
+    
     event_id = str(uuid.uuid4())
     created_at = datetime.utcnow().isoformat()
     
     await db.execute("""
-        INSERT INTO events (id, name, slug, date, drive_folder_url, secret_code, sync_status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO events (id, name, slug, date, drive_folder_url, storage_type, storage_path, secret_code, sync_status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         event_id, 
         event.name, 
         event.slug, 
         event.date.isoformat(), 
         event.drive_folder_url,
+        storage_type,
+        event.storage_path,
         event.secret_code,
         "idle", 
         created_at
@@ -120,7 +141,9 @@ async def list_events():
     rows = await db.fetch_all("SELECT * FROM events ORDER BY created_at DESC")
     return [format_event(row) for row in rows]
 
-ALLOWED_UPDATE_FIELDS = {"name", "slug", "date", "drive_folder_url", "secret_code"}
+ALLOWED_UPDATE_FIELDS = {
+    "name", "slug", "date", "drive_folder_url", "storage_type", "storage_path", "secret_code"
+}
 
 @router.put("/{event_id}", response_model=EventResponse)
 async def update_event(event_id: str, event_data: dict):
@@ -131,6 +154,21 @@ async def update_event(event_id: str, event_data: dict):
     
     if not event_data:
         raise HTTPException(status_code=400, detail="No data to update")
+
+    # Validate storage_path if updating to local
+    target_storage_type = event_data.get("storage_type", existing.get("storage_type", "drive"))
+    target_storage_type = (target_storage_type or "drive").lower().strip()
+    if target_storage_type == "local" and "storage_path" in event_data:
+        path_to_check = event_data.get("storage_path")
+        if not path_to_check:
+            raise HTTPException(status_code=400, detail="Local directory path is required when storage_type is 'local'")
+        from app.services.storage.factory import get_storage_provider
+        provider = get_storage_provider("local")
+        if not provider.resolve_directory(path_to_check):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Directory does not exist or is not accessible on server: {path_to_check}"
+            )
 
     # Build update query dynamically
     fields = []
@@ -195,16 +233,29 @@ async def get_event_storage(event_id: str):
     photos = await db.fetch_all("SELECT * FROM photos WHERE event_id = ?", (event_id,))
     for photo in photos:
         photo_id = photo["id"]
-        if photo.get("drive_file_id"):
+        if photo.get("storage_type") != "local" and photo.get("drive_file_id"):
             cloud_photos_count += 1
         
-        # Check original photo files if any remain locally
-        for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
-            original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
-            if os.path.exists(original_path):
-                file_size = os.path.getsize(original_path)
+        # Check original photo files if local storage or if cached locally in uploads
+        found_orig = False
+        if photo.get("storage_type") == "local" and photo.get("storage_path"):
+            loc_path = photo["storage_path"]
+            if not os.path.isabs(loc_path) and event.get("storage_path"):
+                loc_path = os.path.join(event["storage_path"], loc_path)
+            if os.path.exists(loc_path):
+                file_size = os.path.getsize(loc_path)
                 originals_storage += file_size
                 event_storage += file_size
+                found_orig = True
+
+        if not found_orig:
+            for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG', 'webp', 'WEBP']:
+                original_path = os.path.join(settings.UPLOAD_ROOT, f"{photo_id}.{ext}")
+                if os.path.exists(original_path):
+                    file_size = os.path.getsize(original_path)
+                    originals_storage += file_size
+                    event_storage += file_size
+                    break
         
         # Check thumbnail files
         thumbnail_path = photo.get("thumbnail_path")

@@ -28,6 +28,8 @@ class Database:
                 slug TEXT UNIQUE NOT NULL,
                 date TEXT NOT NULL,
                 drive_folder_url TEXT,
+                storage_type TEXT DEFAULT 'drive',
+                storage_path TEXT,
                 secret_code TEXT,
                 sync_status TEXT DEFAULT 'idle',
                 last_sync_at TEXT,
@@ -41,6 +43,8 @@ class Database:
                 event_id TEXT NOT NULL,
                 original_file_name TEXT,
                 drive_file_id TEXT,
+                storage_type TEXT DEFAULT 'drive',
+                storage_path TEXT,
                 thumbnail_path TEXT,
                 width INTEGER,
                 height INTEGER,
@@ -80,6 +84,22 @@ class Database:
                 FOREIGN KEY (event_id) REFERENCES events (id)
             )
         """)
+
+        # Safe non-destructive schema migrations for existing databases
+        async with self.connection.execute("PRAGMA table_info(events)") as cursor:
+            event_cols = [row[1] for row in await cursor.fetchall()]
+            if "storage_type" not in event_cols:
+                await self.connection.execute("ALTER TABLE events ADD COLUMN storage_type TEXT DEFAULT 'drive'")
+            if "storage_path" not in event_cols:
+                await self.connection.execute("ALTER TABLE events ADD COLUMN storage_path TEXT")
+
+        async with self.connection.execute("PRAGMA table_info(photos)") as cursor:
+            photo_cols = [row[1] for row in await cursor.fetchall()]
+            if "storage_type" not in photo_cols:
+                await self.connection.execute("ALTER TABLE photos ADD COLUMN storage_type TEXT DEFAULT 'drive'")
+            if "storage_path" not in photo_cols:
+                await self.connection.execute("ALTER TABLE photos ADD COLUMN storage_path TEXT")
+
         await self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_photos_event ON photos (event_id)")
         await self.connection.execute(

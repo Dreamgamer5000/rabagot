@@ -5,6 +5,7 @@ services:
     container_name: picshare-backend
     volumes:
       - ./data:/app/data:z
+      - ${LOCAL_PHOTOS_DIR:-./photos}:/photos:ro
     env_file:
       - .env
     restart: "no"

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Lock, Unlock, Eye, EyeOff, Sparkles } from "lucide-react";
+import { Plus, Loader2, Calendar, Globe, LogOut, Copy, Check, RefreshCw, Link as LinkIcon, ExternalLink, Users, X, Trash2, Search, Image as ImageIcon, HardDrive, ChevronDown, ChevronLeft, ChevronRight, KeyRound, Lock, Unlock, Eye, EyeOff, Sparkles, Cloud, Folder } from "lucide-react";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -17,6 +17,8 @@ interface Event {
     slug: string;
     date: string;
     created_at: string;
+    storage_type?: string;
+    storage_path?: string;
     drive_folder_url?: string;
     secret_code?: string;
     sync_status?: string;
@@ -316,6 +318,9 @@ export default function AdminDashboardClient() {
     const [syncing, setSyncing] = useState<Record<string, boolean>>({});
     const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
     const [driveUrl, setDriveUrl] = useState("");
+    const [createStorageType, setCreateStorageType] = useState<"drive" | "local">("drive");
+    const [updateStorageType, setUpdateStorageType] = useState<"drive" | "local">("drive");
+    const [updateStoragePath, setUpdateStoragePath] = useState("");
     const [showGuestsModal, setShowGuestsModal] = useState(false);
     const [selectedEventForGuests, setSelectedEventForGuests] = useState<Event | null>(null);
     const [guests, setGuests] = useState<Guest[]>([]);
@@ -384,13 +389,31 @@ export default function AdminDashboardClient() {
         const token = Cookies.get("admin_token");
         const formData = new FormData(e.currentTarget);
 
-        const payload = {
+        const payload: Record<string, any> = {
             name: formData.get("name"),
             slug: formData.get("slug"),
             date: new Date(formData.get("date") as string).toISOString(),
-            drive_folder_url: formData.get("drive_folder_url"),
-            secret_code: formData.get("secret_code")
+            storage_type: createStorageType,
+            secret_code: formData.get("secret_code") || undefined
         };
+
+        if (createStorageType === "local") {
+            const pathVal = (formData.get("storage_path") as string)?.trim();
+            if (!pathVal) {
+                toast.error("Please enter a local storage directory path");
+                setCreating(false);
+                return;
+            }
+            payload.storage_path = pathVal;
+        } else {
+            const urlVal = (formData.get("drive_folder_url") as string)?.trim();
+            if (!urlVal) {
+                toast.error("Please enter a Google Drive folder URL");
+                setCreating(false);
+                return;
+            }
+            payload.drive_folder_url = urlVal;
+        }
 
         try {
             const response = await fetch(`${API_URL}/events`, {
@@ -429,11 +452,12 @@ export default function AdminDashboardClient() {
             });
 
             if (response.ok) {
-                toast.success("Started syncing photos from Google Drive");
-                setTimeout(() => fetchEvents(), 2000)
+                toast.success("Started photo indexing");
+                setTimeout(() => fetchEvents(), 2000);
                 return;
             } else {
-                toast.error("Sync failed to start");
+                const err = await response.json();
+                toast.error(err.detail || "Sync failed to start");
             }
         } catch (error) {
             console.error("Sync error:", error);
@@ -445,11 +469,29 @@ export default function AdminDashboardClient() {
         }
     };
 
-    const handleUpdateDriveUrl = async (e: React.FormEvent) => {
+    const handleUpdateStorage = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedEventId || !driveUrl) return;
+        if (!selectedEventId) return;
 
         const token = Cookies.get("admin_token");
+        const payload: Record<string, any> = {
+            storage_type: updateStorageType
+        };
+
+        if (updateStorageType === "local") {
+            if (!updateStoragePath.trim()) {
+                toast.error("Please enter a local storage directory path");
+                return;
+            }
+            payload.storage_path = updateStoragePath.trim();
+        } else {
+            if (!driveUrl.trim()) {
+                toast.error("Please enter a Google Drive folder URL");
+                return;
+            }
+            payload.drive_folder_url = driveUrl.trim();
+        }
+
         try {
             const response = await fetch(`${API_URL}/events/${selectedEventId}`, {
                 method: "PUT",
@@ -457,16 +499,18 @@ export default function AdminDashboardClient() {
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${token}`
                 },
-                body: JSON.stringify({ drive_folder_url: driveUrl })
+                body: JSON.stringify(payload)
             });
 
             if (response.ok) {
-                toast.success("Drive folder updated. You can now start sync.");
+                toast.success("Storage location updated. You can now start sync.");
                 setDriveUrl("");
+                setUpdateStoragePath("");
                 setSelectedEventId(null);
                 fetchEvents();
             } else {
-                toast.error("Failed to update Drive URL");
+                const err = await response.json();
+                toast.error(err.detail || "Failed to update storage location");
             }
         } catch (error) {
             console.error("Update error:", error);
@@ -765,28 +809,70 @@ export default function AdminDashboardClient() {
                             <Plus className="w-5 h-5 text-indigo-600" />
                             Create New Event
                         </CardTitle>
-                        <CardDescription>Setup a new event and link a Drive folder</CardDescription>
+                        <CardDescription>Setup a new event and configure your photo storage source</CardDescription>
                     </CardHeader>
                     <CardContent>
                         <form onSubmit={handleCreateEvent} className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label htmlFor="name">Event Name</Label>
-                                    <Input id="name" name="name" placeholder="Wedding 2024" required className="bg-background border-border" />
+                                    <Input id="name" name="name" placeholder="Wedding 2026" required className="bg-background border-border" />
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="slug">URL Slug</Label>
-                                    <Input id="slug" name="slug" placeholder="wedding-2024" required className="bg-background border-border" />
+                                    <Input id="slug" name="slug" placeholder="wedding-2026" required className="bg-background border-border" />
                                 </div>
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="date">Event Date</Label>
                                 <Input id="date" name="date" type="date" required className="bg-background border-border" />
                             </div>
+
+                            {/* Storage Provider Selector */}
                             <div className="space-y-2">
-                                <Label htmlFor="drive_folder_url">Google Drive Folder URL</Label>
-                                <Input id="drive_folder_url" name="drive_folder_url" placeholder="https://drive.google.com/..." className="bg-background border-border" />
+                                <Label>Photo Storage Source</Label>
+                                <div className="grid grid-cols-2 gap-2 p-1 bg-muted/60 rounded-lg border border-border">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCreateStorageType("drive")}
+                                        className={`flex items-center justify-center gap-2 py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                                            createStorageType === "drive"
+                                                ? "bg-background text-foreground shadow-sm border border-border"
+                                                : "text-muted-foreground hover:text-foreground"
+                                        }`}
+                                    >
+                                        <Cloud className="w-3.5 h-3.5 text-blue-500" />
+                                        Google Drive
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCreateStorageType("local")}
+                                        className={`flex items-center justify-center gap-2 py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                                            createStorageType === "local"
+                                                ? "bg-background text-foreground shadow-sm border border-border"
+                                                : "text-muted-foreground hover:text-foreground"
+                                        }`}
+                                    >
+                                        <HardDrive className="w-3.5 h-3.5 text-emerald-500" />
+                                        Local Folder / NAS
+                                    </button>
+                                </div>
                             </div>
+
+                            {createStorageType === "drive" ? (
+                                <div className="space-y-2">
+                                    <Label htmlFor="drive_folder_url">Google Drive Folder URL</Label>
+                                    <Input id="drive_folder_url" name="drive_folder_url" placeholder="https://drive.google.com/..." required className="bg-background border-border" />
+                                    <p className="text-[11px] text-muted-foreground">Photos are indexed from Google Drive using configured service accounts.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <Label htmlFor="storage_path">Server / NAS Directory Path</Label>
+                                    <Input id="storage_path" name="storage_path" placeholder="/photos/wedding-2026 or photos/event" required className="bg-background border-border font-mono text-xs" />
+                                    <p className="text-[11px] text-muted-foreground">Direct directory path on the server/NAS. Fast zero-copy indexing with 0 Google Drive API calls.</p>
+                                </div>
+                            )}
+
                             <div className="space-y-2">
                                 <Label htmlFor="secret_code">Secret Event Code (Optional)</Label>
                                 <Input id="secret_code" name="secret_code" placeholder="Leave empty for public access" className="bg-background border-border" />
@@ -805,42 +891,106 @@ export default function AdminDashboardClient() {
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                             <RefreshCw className="w-5 h-5 text-indigo-600" />
-                            Link Folders
+                            Configure Storage Location
                         </CardTitle>
-                        <CardDescription>Update Drive URL for existing events to start indexing</CardDescription>
+                        <CardDescription>Update Drive URL or local folder path for existing events</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <form onSubmit={handleUpdateDriveUrl} className="space-y-4">
+                        <form onSubmit={handleUpdateStorage} className="space-y-4">
                             <div className="space-y-2">
                                 <Label>Select Event</Label>
                                 <select
                                     className="w-full h-10 px-3 rounded-md border border-border bg-background focus:ring-2 focus:ring-indigo-500 outline-none text-sm text-foreground"
-                                    onChange={(e) => setSelectedEventId(e.target.value)}
+                                    onChange={(e) => {
+                                        const id = e.target.value;
+                                        setSelectedEventId(id);
+                                        const ev = events.find(item => item._id === id);
+                                        if (ev) {
+                                            const isLocal = ev.storage_type === "local";
+                                            setUpdateStorageType(isLocal ? "local" : "drive");
+                                            if (isLocal) {
+                                                setUpdateStoragePath(ev.storage_path || "");
+                                                setDriveUrl("");
+                                            } else {
+                                                setDriveUrl(ev.drive_folder_url || "");
+                                                setUpdateStoragePath("");
+                                            }
+                                        }
+                                    }}
                                     value={selectedEventId || ""}
                                     required
                                 >
                                     <option value="" disabled>Choose an event...</option>
                                     {events.map((event) => (
-                                        <option key={event._id} value={event._id}>{event.name}</option>
+                                        <option key={event._id} value={event._id}>{event.name} ({event.storage_type === "local" ? "Local Folder" : "Google Drive"})</option>
                                     ))}
                                 </select>
                             </div>
+
                             <div className="space-y-2">
-                                <Label htmlFor="driveUrl">New Google Drive Folder URL</Label>
-                                <div className="relative">
-                                    <Input
-                                        id="driveUrl"
-                                        value={driveUrl}
-                                        onChange={(e) => setDriveUrl(e.target.value)}
-                                        placeholder="Paste link here..."
-                                        required
-                                        className="pr-10 bg-background border-border"
-                                    />
-                                    <LinkIcon className="absolute right-3 top-2.5 w-4 h-4 text-muted-foreground" />
+                                <Label>Storage Provider</Label>
+                                <div className="grid grid-cols-2 gap-2 p-1 bg-muted/60 rounded-lg border border-border">
+                                    <button
+                                        type="button"
+                                        onClick={() => setUpdateStorageType("drive")}
+                                        className={`flex items-center justify-center gap-2 py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                                            updateStorageType === "drive"
+                                                ? "bg-background text-foreground shadow-sm border border-border"
+                                                : "text-muted-foreground hover:text-foreground"
+                                        }`}
+                                    >
+                                        <Cloud className="w-3.5 h-3.5 text-blue-500" />
+                                        Google Drive
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setUpdateStorageType("local")}
+                                        className={`flex items-center justify-center gap-2 py-2 px-3 rounded-md text-xs font-semibold transition-all ${
+                                            updateStorageType === "local"
+                                                ? "bg-background text-foreground shadow-sm border border-border"
+                                                : "text-muted-foreground hover:text-foreground"
+                                        }`}
+                                    >
+                                        <HardDrive className="w-3.5 h-3.5 text-emerald-500" />
+                                        Local Folder
+                                    </button>
                                 </div>
                             </div>
-                            <Button className="w-full bg-foreground text-background hover:bg-foreground/90 h-11 border-none shadow-lg" disabled={!selectedEventId || !driveUrl}>
-                                Update Folder Path
+
+                            {updateStorageType === "drive" ? (
+                                <div className="space-y-2">
+                                    <Label htmlFor="driveUrl">Google Drive Folder URL</Label>
+                                    <div className="relative">
+                                        <Input
+                                            id="driveUrl"
+                                            value={driveUrl}
+                                            onChange={(e) => setDriveUrl(e.target.value)}
+                                            placeholder="Paste Google Drive folder link..."
+                                            required={updateStorageType === "drive"}
+                                            className="pr-10 bg-background border-border"
+                                        />
+                                        <LinkIcon className="absolute right-3 top-2.5 w-4 h-4 text-muted-foreground" />
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <Label htmlFor="updateStoragePath">Local Server / NAS Directory Path</Label>
+                                    <div className="relative">
+                                        <Input
+                                            id="updateStoragePath"
+                                            value={updateStoragePath}
+                                            onChange={(e) => setUpdateStoragePath(e.target.value)}
+                                            placeholder="/photos/wedding-2026 or photos/event"
+                                            required={updateStorageType === "local"}
+                                            className="pr-10 bg-background border-border font-mono text-xs"
+                                        />
+                                        <HardDrive className="absolute right-3 top-2.5 w-4 h-4 text-muted-foreground" />
+                                    </div>
+                                </div>
+                            )}
+
+                            <Button className="w-full bg-foreground text-background hover:bg-foreground/90 h-11 border-none shadow-lg" disabled={!selectedEventId}>
+                                Save Storage Location
                             </Button>
                         </form>
                     </CardContent>
@@ -920,17 +1070,44 @@ export default function AdminDashboardClient() {
                                     </Button>
                                 </div>
 
-                                {event.drive_folder_url && (
+                                {event.storage_type === "local" ? (
                                     <div className="p-3 bg-muted/40 rounded-xl space-y-2">
-                                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Connected Folder</p>
-                                        <a
-                                            href={event.drive_folder_url}
-                                            target="_blank"
-                                            className="text-xs text-indigo-600 dark:text-indigo-400 truncate block hover:underline flex items-center gap-1 font-medium"
-                                        >
-                                            <ExternalLink className="w-3 h-3" />
-                                            Visit Source Folder
-                                        </a>
+                                        <div className="flex items-center justify-between">
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Storage Source</p>
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
+                                                <HardDrive className="w-3 h-3" /> Local Folder
+                                            </span>
+                                        </div>
+                                        <p className="text-xs font-mono text-foreground truncate" title={event.storage_path}>
+                                            {event.storage_path || "Path not configured"}
+                                        </p>
+                                        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                                            <span>Last indexed:</span>
+                                            <span className="font-bold">{event.last_sync_at ? new Date(event.last_sync_at).toLocaleTimeString() : 'Never'}</span>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="p-3 bg-muted/40 rounded-xl space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Storage Source</p>
+                                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">
+                                                <Cloud className="w-3 h-3" /> Google Drive
+                                            </span>
+                                        </div>
+                                        {event.drive_folder_url ? (
+                                            <a
+                                                href={event.drive_folder_url}
+                                                target="_blank"
+                                                className="text-xs text-indigo-600 dark:text-indigo-400 truncate block hover:underline flex items-center gap-1 font-medium"
+                                            >
+                                                <ExternalLink className="w-3 h-3" />
+                                                Visit Source Folder
+                                            </a>
+                                        ) : (
+                                            <span className="text-xs text-amber-600 dark:text-amber-400 block font-medium">
+                                                Drive URL not configured
+                                            </span>
+                                        )}
                                         <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                                             <span>Last indexed:</span>
                                             <span className="font-bold">{event.last_sync_at ? new Date(event.last_sync_at).toLocaleTimeString() : 'Never'}</span>
@@ -942,7 +1119,11 @@ export default function AdminDashboardClient() {
                                     <Button
                                         variant="default"
                                         size="sm"
-                                        disabled={syncing[event._id] || !event.drive_folder_url || event.sync_status === "syncing"}
+                                        disabled={
+                                            syncing[event._id] ||
+                                            !(event.storage_type === "local" ? event.storage_path : event.drive_folder_url) ||
+                                            event.sync_status === "syncing"
+                                        }
                                         onClick={() => handleSyncPhotos(event._id)}
                                         className="h-9 flex-1 bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-100 dark:shadow-none border-none"
                                     >

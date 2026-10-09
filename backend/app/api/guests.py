@@ -15,6 +15,7 @@ from PIL import Image
 from app.services.db import db
 from app.services.drive_service import drive_service
 from app.services.face_service import face_service
+from app.services.storage import get_storage_provider
 from app.core.config import get_settings
 
 router = APIRouter(prefix="/guests", tags=["guests"])
@@ -361,13 +362,28 @@ async def _generate_guest_zip(request_id: str):
         photo_rows = await db.fetch_all(
             f"SELECT * FROM photos WHERE id IN ({placeholders})", photo_ids)
 
+        local_provider = get_storage_provider("local")
+        events_cache = {}
+
         for p in photo_rows:
             p_id = p["id"]
             raw_name = p.get("original_file_name") or f"{p_id}.jpg"
             base_name, _ = os.path.splitext(raw_name)
             jpeg_filename = f"{base_name}.jpg"
 
-            # 1. Check local original
+            # 1. Check local storage provider
+            if p.get("storage_type") == "local" and p.get("storage_path"):
+                ev_id = p["event_id"]
+                if ev_id not in events_cache:
+                    ev_row = await db.fetch_one("SELECT storage_path FROM events WHERE id = ?", (ev_id,))
+                    events_cache[ev_id] = ev_row.get("storage_path") if ev_row else None
+                base_loc = events_cache[ev_id]
+                loc_path = local_provider.get_local_path(p["storage_path"], base_loc)
+                if loc_path and os.path.exists(loc_path):
+                    zip_file.write(loc_path, raw_name)
+                    continue
+
+            # 2. Check local original in UPLOAD_ROOT
             local_path = None
             for ext in ['jpg', 'jpeg', 'png', 'JPG', 'JPEG', 'PNG']:
                 path = os.path.join(settings.UPLOAD_ROOT, f"{p_id}.{ext}")
@@ -379,7 +395,7 @@ async def _generate_guest_zip(request_id: str):
                 zip_file.write(local_path, raw_name)
                 continue
 
-            # 2. Check 2K local preview -> convert to universal JPEG
+            # 3. Check 2K local preview -> convert to universal JPEG
             preview_path = os.path.join(settings.PREVIEWS_ROOT, f"{p_id}.webp")
             if os.path.exists(preview_path):
                 try:
@@ -393,7 +409,7 @@ async def _generate_guest_zip(request_id: str):
                 except Exception as e:
                     print(f"Zip preview convert error for {p_id}: {e}")
 
-            # 3. Fallback to Google Drive if needed
+            # 4. Fallback to Google Drive if needed
             if p.get("drive_file_id"):
                 try:
                     content, filename = await drive_service.download_file(

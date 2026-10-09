@@ -98,15 +98,18 @@
 
 ### 1. Prerequisites
 - **Docker & Docker Compose** (Recommended)
-- **Google Cloud Service Account** (with Google Drive API enabled)
+- **Storage Option**:
+  - **Local Folder Provider** (Recommended for local/NAS setups): zero external configuration needed! Mount host photos to `/photos` or drop them in `./photos`.
+  - **Google Drive Provider** (For low-storage cloud VPS): Google Cloud Service Account with Google Drive API enabled.
 - **Python 3.10+** & **Bun** (for local development)
 
 ### 2. Configure Environment
 
-1. **Google Drive Setup**:
-   - Create a Google Cloud Project and enable the **Google Drive API**.
-   - Create a **Service Account**, download the JSON key file, and place it in `backend/data/accounts/0.json` (or configure `backend/credentials.json`).
-   - Share your Google Drive event folder with the Service Account email address with **Viewer** access.
+1. **Photo Storage Setup**:
+   - **Option A — Local Folder / NAS (Easiest)**:
+     Place photos in `./photos/<event-name>/` (or set `LOCAL_PHOTOS_DIR=/path/to/photos` in `.env`). In the Admin dashboard, choose **Local Folder / NAS** and specify `/photos/<event-name>`.
+   - **Option B — Google Drive**:
+     Create a Google Cloud Project, enable the **Google Drive API**, create a Service Account, and place the JSON key file in `backend/data/accounts/0.json`. Share your Google Drive event folder with the Service Account email address with **Viewer** access.
 
 2. **Backend Configuration**:
    Create `backend/.env`:
