@@ -195,6 +195,13 @@ export default function EventGalleryClient() {
     };
 
     const webcamRef = useRef<Webcam>(null);
+    const allPhotosSentinelRef = useRef<HTMLDivElement>(null);
+    const matchedPhotosSentinelRef = useRef<HTMLDivElement>(null);
+    const isFetchingPhotosRef = useRef(false);
+    const isFetchingMatchesRef = useRef(false);
+
+    const remainingPhotos = Math.max(0, totalPhotos - photos.length);
+    const remainingMatchedPhotos = Math.max(0, matchedTotalCount - matchedPhotos.length);
 
     // 1. Initial Load: Check session passcode & fetch Event info
     useEffect(() => {
@@ -242,7 +249,8 @@ export default function EventGalleryClient() {
     // 2. Fetch All Event Photos
     const fetchEventPhotos = useCallback(
         async (pageNum: number = 1, append: boolean = false) => {
-            if (!isVerified) return;
+            if (!isVerified || isFetchingPhotosRef.current) return;
+            isFetchingPhotosRef.current = true;
             setLoadingPhotos(true);
 
             try {
@@ -250,7 +258,11 @@ export default function EventGalleryClient() {
                 if (res.ok) {
                     const data = await res.json();
                     if (append) {
-                        setPhotos((prev) => [...prev, ...data.photos]);
+                        setPhotos((prev) => {
+                            const existingIds = new Set(prev.map((p) => p.id));
+                            const newUnique = (data.photos || []).filter((p: PhotoItem) => !existingIds.has(p.id));
+                            return [...prev, ...newUnique];
+                        });
                     } else {
                         setPhotos(data.photos || []);
                     }
@@ -264,6 +276,7 @@ export default function EventGalleryClient() {
                 console.error("Error fetching photos:", err);
                 toast.error("Error loading photos");
             } finally {
+                isFetchingPhotosRef.current = false;
                 setLoadingPhotos(false);
             }
         },
@@ -273,6 +286,8 @@ export default function EventGalleryClient() {
     // 3. Fetch Matched Photos for Guest
     const fetchMatchedPhotos = useCallback(
         async (guestId: string, pageNum: number = 1, append: boolean = false) => {
+            if (isFetchingMatchesRef.current) return;
+            isFetchingMatchesRef.current = true;
             try {
                 if (append) {
                     setLoadingMoreMatches(true);
@@ -281,7 +296,11 @@ export default function EventGalleryClient() {
                 if (res.ok) {
                     const data = await res.json();
                     if (append) {
-                        setMatchedPhotos((prev) => [...prev, ...(data.photos || [])]);
+                        setMatchedPhotos((prev) => {
+                            const existingIds = new Set(prev.map((p) => p.id));
+                            const newUnique = (data.photos || []).filter((p: PhotoItem) => !existingIds.has(p.id));
+                            return [...prev, ...newUnique];
+                        });
                     } else {
                         setMatchedPhotos(data.photos || []);
                     }
@@ -301,6 +320,7 @@ export default function EventGalleryClient() {
             } catch (err) {
                 console.error("Error fetching matched photos:", err);
             } finally {
+                isFetchingMatchesRef.current = false;
                 setLoadingMoreMatches(false);
             }
         },
@@ -316,6 +336,46 @@ export default function EventGalleryClient() {
             }
         }
     }, [isVerified, fetchEventPhotos, matchedGuestId, fetchMatchedPhotos]);
+
+    // Auto-load Infinite Scroll for All Photos
+    useEffect(() => {
+        if (activeTab !== "all" || !isVerified) return;
+        const sentinel = allPhotosSentinelRef.current;
+        if (!sentinel) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                const entry = entries[0];
+                if (entry.isIntersecting && !isFetchingPhotosRef.current && page < totalPages) {
+                    fetchEventPhotos(page + 1, true);
+                }
+            },
+            { rootMargin: "350px" }
+        );
+
+        observer.observe(sentinel);
+        return () => observer.disconnect();
+    }, [activeTab, isVerified, page, totalPages, fetchEventPhotos]);
+
+    // Auto-load Infinite Scroll for Matched Photos
+    useEffect(() => {
+        if (activeTab !== "my" || !matchedGuestId) return;
+        const sentinel = matchedPhotosSentinelRef.current;
+        if (!sentinel) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                const entry = entries[0];
+                if (entry.isIntersecting && !isFetchingMatchesRef.current && matchedPage < matchedTotalPages) {
+                    fetchMatchedPhotos(matchedGuestId, matchedPage + 1, true);
+                }
+            },
+            { rootMargin: "350px" }
+        );
+
+        observer.observe(sentinel);
+        return () => observer.disconnect();
+    }, [activeTab, matchedGuestId, matchedPage, matchedTotalPages, fetchMatchedPhotos]);
 
     // Passcode Verification Handler
     const handleVerifyPasscode = async (e: React.FormEvent) => {
@@ -805,19 +865,42 @@ export default function EventGalleryClient() {
                             </div>
                         )}
 
-                        {/* Load More Button */}
-                        {page < totalPages && (
-                            <div className="flex justify-center mt-10 mb-6">
-                                <Button
-                                    variant="outline"
-                                    onClick={() => fetchEventPhotos(page + 1, true)}
-                                    disabled={loadingPhotos}
-                                    className="h-11 px-8 rounded-full border-border/80 hover:bg-muted font-medium shadow-xs"
+                        {/* Auto-Load Infinite Scroll Sentinel & Remaining Counter */}
+                        {photos.length > 0 && (
+                            page < totalPages ? (
+                                <div
+                                    ref={allPhotosSentinelRef}
+                                    className="flex flex-col items-center justify-center py-12 my-6"
                                 >
-                                    {loadingPhotos ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                                    Load More Photos ({totalPhotos - photos.length} remaining)
-                                </Button>
-                            </div>
+                                    <div className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-muted/60 border border-border/60 backdrop-blur-md shadow-xs">
+                                        {loadingPhotos ? (
+                                            <>
+                                                <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
+                                                <span className="text-xs sm:text-sm font-medium text-foreground">
+                                                    Loading photos... ({remainingPhotos} remaining)
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span className="relative flex h-2.5 w-2.5">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+                                                </span>
+                                                <span className="text-xs sm:text-sm font-medium text-muted-foreground">
+                                                    {remainingPhotos} photo{remainingPhotos === 1 ? "" : "s"} remaining • Auto-loading as you scroll
+                                                </span>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex items-center justify-center py-12 my-6">
+                                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-muted/30 border border-border/30 text-xs text-muted-foreground/80">
+                                        <Check className="w-3.5 h-3.5 text-emerald-500 stroke-[2.5]" />
+                                        <span>All {totalPhotos} photos loaded</span>
+                                    </div>
+                                </div>
+                            )
                         )}
                     </div>
                 ) : (
@@ -887,19 +970,42 @@ export default function EventGalleryClient() {
                             </div>
                         )}
 
-                        {/* Load More Button for Matched Photos */}
-                        {matchedPage < matchedTotalPages && (
-                            <div className="flex justify-center mt-10 mb-6">
-                                <Button
-                                    variant="outline"
-                                    onClick={() => fetchMatchedPhotos(matchedGuestId!, matchedPage + 1, true)}
-                                    disabled={loadingMoreMatches}
-                                    className="h-11 px-8 rounded-full border-border/80 hover:bg-muted font-medium shadow-xs"
+                        {/* Auto-Load Infinite Scroll Sentinel & Remaining Counter for Matched Photos */}
+                        {matchedPhotos.length > 0 && (
+                            matchedPage < matchedTotalPages ? (
+                                <div
+                                    ref={matchedPhotosSentinelRef}
+                                    className="flex flex-col items-center justify-center py-12 my-6"
                                 >
-                                    {loadingMoreMatches ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                                    Load More Photos ({matchedTotalCount - matchedPhotos.length} remaining)
-                                </Button>
-                            </div>
+                                    <div className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-full bg-muted/60 border border-border/60 backdrop-blur-md shadow-xs">
+                                        {loadingMoreMatches ? (
+                                            <>
+                                                <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
+                                                <span className="text-xs sm:text-sm font-medium text-foreground">
+                                                    Loading photos... ({remainingMatchedPhotos} remaining)
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span className="relative flex h-2.5 w-2.5">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                                                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+                                                </span>
+                                                <span className="text-xs sm:text-sm font-medium text-muted-foreground">
+                                                    {remainingMatchedPhotos} photo{remainingMatchedPhotos === 1 ? "" : "s"} remaining • Auto-loading as you scroll
+                                                </span>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex items-center justify-center py-12 my-6">
+                                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-muted/30 border border-border/30 text-xs text-muted-foreground/80">
+                                        <Check className="w-3.5 h-3.5 text-emerald-500 stroke-[2.5]" />
+                                        <span>All {matchedTotalCount} matched photos loaded</span>
+                                    </div>
+                                </div>
+                            )
                         )}
                     </div>
                 )}
