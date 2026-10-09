@@ -178,6 +178,9 @@ If you have a powerful workstation/laptop (e.g., AMD Ryzen 9 / Intel i9) and wan
    ```
 3. **Run on VPS**: Start Docker on your VPS. The server immediately serves instant face recognition and 4ms 2K previews with **0% initial CPU indexing load** and minimal disk usage.
 
+### Multi-Instance Hosting & Caddy Reverse Proxy
+To host multiple galleries on a single server (e.g. `farewell.rejit.in` alongside `weddingphotos.rejit.in`) without Docker naming collisions or port conflicts, configure unique container names in `.env` and route domains using Caddy. See the complete [Caddy Deployment Guide](docs/CADDY_DEPLOYMENT_GUIDE.md) and [Caddyfile.example](Caddyfile.example).
+
 ---
 
 ## 🛠️ Local Development

@@ -24,27 +24,32 @@ IMAGE_TAG="${IMAGE_TAG:-latest}"
 NEXT_PUBLIC_UMAMI_WEBSITE_ID="${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-f7fe8c3d-060b-480c-90c5-bf72c35098db}"
 NEXT_PUBLIC_UMAMI_SCRIPT_URL="${NEXT_PUBLIC_UMAMI_SCRIPT_URL:-https://cloud.umami.is/script.js}"
 
+BACKEND_CONTAINER_NAME="${BACKEND_CONTAINER_NAME:-picshare-backend}"
+FRONTEND_CONTAINER_NAME="${FRONTEND_CONTAINER_NAME:-picshare-frontend}"
+BACKEND_HOSTNAME="${BACKEND_HOSTNAME:-${BACKEND_CONTAINER_NAME}:8000}"
+REMOTE_APP_DIR="${REMOTE_APP_DIR:-/home/dream/picshare}"
+PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-weddingphotos.rejit.in}"
+
 REGISTRY="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_REPO_NAME}"
-BACKEND_IMAGE="${REGISTRY}/picshare-backend:${IMAGE_TAG}"
-FRONTEND_IMAGE="${REGISTRY}/picshare-frontend:${IMAGE_TAG}"
-REMOTE_APP_DIR="/home/dream/picshare"
+BACKEND_IMAGE="${REGISTRY}/${BACKEND_CONTAINER_NAME}:${IMAGE_TAG}"
+FRONTEND_IMAGE="${REGISTRY}/${FRONTEND_CONTAINER_NAME}:${IMAGE_TAG}"
 
 echo "========================================================"
 echo " [1/5] Building latest Docker images (layer cached)..."
 echo "========================================================"
 echo "-> Building backend image: ${BACKEND_IMAGE}"
 docker build \
-  -t picshare-backend:latest \
+  -t "${BACKEND_CONTAINER_NAME}:latest" \
   -t "${BACKEND_IMAGE}" \
   ./backend
 
 echo "-> Building frontend image: ${FRONTEND_IMAGE}"
 docker build \
   --build-arg NEXT_PUBLIC_API_URL="/api" \
-  --build-arg BACKEND_HOSTNAME="picshare-backend:8000" \
+  --build-arg BACKEND_HOSTNAME="${BACKEND_HOSTNAME}" \
   --build-arg NEXT_PUBLIC_UMAMI_WEBSITE_ID="${NEXT_PUBLIC_UMAMI_WEBSITE_ID}" \
   --build-arg NEXT_PUBLIC_UMAMI_SCRIPT_URL="${NEXT_PUBLIC_UMAMI_SCRIPT_URL}" \
-  -t picshare-frontend:latest \
+  -t "${FRONTEND_CONTAINER_NAME}:latest" \
   -t "${FRONTEND_IMAGE}" \
   ./frontend
 
@@ -102,12 +107,14 @@ echo "========================================================"
 gcloud compute ssh "${GCP_VM_NAME}" \
   --zone="${GCP_ZONE}" \
   --project="${GCP_PROJECT_ID}" \
-  --command="sudo docker ps --filter 'name=picshare'"
+  --command="sudo docker ps --filter 'name=${BACKEND_CONTAINER_NAME}'"
 
-echo ""
-echo "Testing public domain: https://weddingphotos.rejit.in"
-sleep 2
-curl -I -s https://weddingphotos.rejit.in | head -n 10 || true
+if [ -n "${PUBLIC_DOMAIN}" ]; then
+  echo ""
+  echo "Testing public domain: https://${PUBLIC_DOMAIN}"
+  sleep 2
+  curl -I -s "https://${PUBLIC_DOMAIN}" | head -n 10 || true
+fi
 
 echo ""
 echo "========================================================"

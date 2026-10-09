@@ -2,7 +2,8 @@ services:
   backend:
     build: ./backend
     init: true
-    container_name: picshare-backend
+    container_name: ${BACKEND_CONTAINER_NAME:-picshare-backend}
+    hostname: ${BACKEND_CONTAINER_NAME:-picshare-backend}
     volumes:
       - ./data:/app/data:z
       - ${LOCAL_PHOTOS_DIR:-./photos}:/photos:ro
@@ -11,9 +12,8 @@ services:
       - .env
     restart: "no"
     ports:
-      - 8000:8000
+      - "${BACKEND_PORT:-8000}:8000"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-    hostname: picshare-backend
     mem_limit: ${BACKEND_MEM_LIMIT:-16G}
     cpu_count: ${BACKEND_CPU_COUNT:-12}
 
@@ -26,15 +26,15 @@ services:
         - NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}
         - NEXT_PUBLIC_UMAMI_SCRIPT_URL=${NEXT_PUBLIC_UMAMI_SCRIPT_URL:-https://cloud.umami.is/script.js}
     init: true
-    container_name: picshare-frontend
+    container_name: ${FRONTEND_CONTAINER_NAME:-picshare-frontend}
     ports:
-      - "3005:3000"
+      - "${FRONTEND_PORT:-3005}:3000"
     depends_on:
       - backend
     restart: "no"
     environment:
-      - NEXT_PUBLIC_API_URL=/api
-      - BACKEND_HOSTNAME=picshare-backend:8000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-/api}
+      - BACKEND_HOSTNAME=${BACKEND_HOSTNAME:-picshare-backend:8000}
       - NEXT_PUBLIC_UMAMI_WEBSITE_ID=${NEXT_PUBLIC_UMAMI_WEBSITE_ID:-}
       - NEXT_PUBLIC_UMAMI_SCRIPT_URL=${NEXT_PUBLIC_UMAMI_SCRIPT_URL:-https://cloud.umami.is/script.js}
 # Define named volumes if you prefer, but host-binding is simpler for VPS deployments

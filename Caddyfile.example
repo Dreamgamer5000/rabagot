@@ -1,0 +1,77 @@
+# ==============================================================================
+# PICSHARE (rabagot) - Caddyfile Example for Multi-Instance Deployments
+# ==============================================================================
+# This file demonstrates how to route multiple independent PICSHARE instances
+# (e.g., weddingphotos.rejit.in and farewell.rejit.in) on a single server using Caddy.
+#
+# Caddy automatically provisions and renews SSL/TLS certificates via Let's Encrypt.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# OPTION 1: Caddy Running in Docker (Shared Docker Network: web_net) [RECOMMENDED]
+# ------------------------------------------------------------------------------
+# Prerequisites:
+#   1. Create the external network once:
+#        sudo docker network create web_net
+#   2. Run Caddy in a container attached to web_net.
+#   3. Both PICSHARE instances attach to web_net via docker-compose.prod.yml.
+#   4. Caddy routes directly to the FRONTEND_CONTAINER_NAME on internal port 3000.
+# ------------------------------------------------------------------------------
+
+# Instance 1: Wedding Photos
+weddingphotos.rejit.in {
+    # Increase maximum upload size for high-res photo uploads (default is usually unlimited or 100MB)
+    request_body {
+        max_size 500MB
+    }
+
+    # Enable gzip/zstd compression
+    encode gzip zstd
+
+    # Route to first frontend container
+    reverse_proxy picshare-frontend:3000
+}
+
+# Instance 2: Farewell Photos
+farewell.rejit.in {
+    request_body {
+        max_size 500MB
+    }
+
+    encode gzip zstd
+
+    # Route to second frontend container (matches FRONTEND_CONTAINER_NAME in .env)
+    reverse_proxy farewell-frontend:3000
+}
+
+
+# ------------------------------------------------------------------------------
+# OPTION 2: Caddy Running Directly on Host OS (systemd / apt install caddy)
+# ------------------------------------------------------------------------------
+# If Caddy is installed natively on your server, bind each instance to a unique
+# host port in docker-compose.yml (or docker-compose.prod.yml):
+#
+# Instance 1 (.env):
+#   FRONTEND_PORT=3005
+#
+# Instance 2 (.env):
+#   FRONTEND_PORT=3006
+#
+# Then route to localhost:
+# ------------------------------------------------------------------------------
+
+# weddingphotos.rejit.in {
+#     encode gzip zstd
+#     request_body {
+#         max_size 500MB
+#     }
+#     reverse_proxy 127.0.0.1:3005
+# }
+
+# farewell.rejit.in {
+#     encode gzip zstd
+#     request_body {
+#         max_size 500MB
+#     }
+#     reverse_proxy 127.0.0.1:3006
+# }
